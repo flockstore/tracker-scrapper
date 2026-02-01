@@ -20,7 +20,7 @@ func TestServientregaAdapter_GetTrackingHistory(t *testing.T) {
 		"Code": 1,
 		"Results": [
 			{
-				"numeroGuia": "2259200365",
+				"numeroGuia": "2200000000",
 				"fechaEnvio": "31/01/2026 12:51 ",
 				"estadoActual": "EN PROCESAMIENTO",
 				"movimientos": [

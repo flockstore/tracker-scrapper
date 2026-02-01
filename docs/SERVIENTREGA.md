@@ -29,7 +29,7 @@ The scraper expects a JSON response with the following key fields:
   "Code": 1,
   "Results": [
     {
-      "numeroGuia": "2281937522",
+      "numeroGuia": "22000000000",
       "fechaEnvio": "17/01/2026 10:57 ",
       "estadoActual": "ENTREGADO",
       "fechaEstimadaEntrega": "",
