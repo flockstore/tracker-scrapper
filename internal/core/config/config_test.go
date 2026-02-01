@@ -17,10 +17,16 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Setenv("WC_URL", "https://default.com")
 	os.Setenv("WC_CONSUMER_KEY", "ck_default")
 	os.Setenv("WC_CONSUMER_SECRET", "cs_default")
+	os.Setenv("COURIER_COORDINADORA_CO", "https://coordinadora.test")
+	os.Setenv("COURIER_SERVIENTREGA_CO", "https://servientrega.test")
+	os.Setenv("COURIER_INTERRAPIDISIMO_CO", "https://interrapidisimo.test")
 	defer func() {
 		os.Unsetenv("WC_URL")
 		os.Unsetenv("WC_CONSUMER_KEY")
 		os.Unsetenv("WC_CONSUMER_SECRET")
+		os.Unsetenv("COURIER_COORDINADORA_CO")
+		os.Unsetenv("COURIER_SERVIENTREGA_CO")
+		os.Unsetenv("COURIER_INTERRAPIDISIMO_CO")
 	}()
 
 	cfg, err := Load(".")
@@ -40,6 +46,9 @@ func TestLoad_EnvVars(t *testing.T) {
 	os.Setenv("WC_URL", "https://example.com")
 	os.Setenv("WC_CONSUMER_KEY", "ck_123")
 	os.Setenv("WC_CONSUMER_SECRET", "cs_123")
+	os.Setenv("COURIER_COORDINADORA_CO", "https://coordinadora.test")
+	os.Setenv("COURIER_SERVIENTREGA_CO", "https://servientrega.test")
+	os.Setenv("COURIER_INTERRAPIDISIMO_CO", "https://interrapidisimo.test")
 	defer func() {
 		os.Unsetenv("APP_ENV")
 		os.Unsetenv("LOG_LEVEL")
@@ -47,6 +56,9 @@ func TestLoad_EnvVars(t *testing.T) {
 		os.Unsetenv("WC_URL")
 		os.Unsetenv("WC_CONSUMER_KEY")
 		os.Unsetenv("WC_CONSUMER_SECRET")
+		os.Unsetenv("COURIER_COORDINADORA_CO")
+		os.Unsetenv("COURIER_SERVIENTREGA_CO")
+		os.Unsetenv("COURIER_INTERRAPIDISIMO_CO")
 	}()
 
 	cfg, err := Load(".")
@@ -68,6 +80,9 @@ SERVER_PORT=7070
 WC_URL=https://staging.example.com
 WC_CONSUMER_KEY=ck_staging
 WC_CONSUMER_SECRET=cs_staging
+COURIER_COORDINADORA_CO=https://coordinadora.test
+COURIER_SERVIENTREGA_CO=https://servientrega.test
+COURIER_INTERRAPIDISIMO_CO=https://interrapidisimo.test
 `)
 	err := os.WriteFile(".env", content, 0644)
 	require.NoError(t, err)

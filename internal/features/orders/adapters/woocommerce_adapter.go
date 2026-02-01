@@ -104,17 +104,18 @@ func (a *WooCommerceAdapter) mapToDomain(wcOrder woocommerceOrder) *domain.Order
 	status := mapStatus(wcOrder.Status, tracking)
 
 	return &domain.Order{
-		ID:        strconv.Itoa(wcOrder.ID),
-		Status:    status,
-		FirstName: wcOrder.Billing.FirstName,
-		LastName:  wcOrder.Billing.LastName,
-		Address:   wcOrder.Shipping.Address1,
-		City:      wcOrder.Shipping.City,
-		State:     wcOrder.Shipping.State,
-		Email:     wcOrder.Billing.Email,
-		Tracking:  tracking,
-		CreatedAt: time.Time(wcOrder.DateCreated),
-		Items:     mapItems(wcOrder.LineItems, wcOrder.FeeLines),
+		ID:            strconv.Itoa(wcOrder.ID),
+		Status:        status,
+		FirstName:     wcOrder.Billing.FirstName,
+		LastName:      wcOrder.Billing.LastName,
+		Address:       wcOrder.Shipping.Address1,
+		City:          wcOrder.Shipping.City,
+		State:         wcOrder.Shipping.State,
+		Email:         wcOrder.Billing.Email,
+		PaymentMethod: wcOrder.PaymentMethodTitle,
+		Tracking:      tracking,
+		CreatedAt:     time.Time(wcOrder.DateCreated),
+		Items:         mapItems(wcOrder.LineItems, wcOrder.FeeLines),
 	}
 }
 
@@ -126,15 +127,15 @@ func mapStatus(status string, tracking []domain.TrackingInfo) domain.OrderStatus
 
 	lowerStatus := strings.ToLower(status)
 
-	if lowerStatus == "completed" {
-		return domain.OrderStatusShipped
-	}
-
 	switch lowerStatus {
+	case "completed":
+		return domain.OrderStatusShipped
+	case "cancelled", "refunded", "failed":
+		return domain.OrderStatusCancelled
 	case "pending", "processing", "on-hold":
 		return domain.OrderStatusCreated
 	default:
-		return domain.OrderStatusCreated
+		return domain.OrderStatusPending
 	}
 }
 
@@ -216,17 +217,9 @@ func parseTrackingItems(value interface{}) ([]domain.TrackingInfo, error) {
 
 	var tracking []domain.TrackingInfo
 	for _, item := range wcItems {
-		var dateShipped time.Time
-		if item.DateShipped != "" {
-			if parsed, err := time.Parse("2006-01-02", item.DateShipped); err == nil {
-				dateShipped = parsed
-			}
-		}
-
 		tracking = append(tracking, domain.TrackingInfo{
 			TrackingProvider: item.TrackingProvider,
 			TrackingNumber:   item.TrackingNumber,
-			DateShipped:      dateShipped,
 		})
 	}
 
@@ -272,6 +265,8 @@ type woocommerceOrder struct {
 	Status string `json:"status"`
 	// DateCreated is the timestamp when the order was created.
 	DateCreated wcTime `json:"date_created"`
+	// PaymentMethodTitle is the display name of the payment method.
+	PaymentMethodTitle string `json:"payment_method_title"`
 	// Billing holds the billing address details.
 	Billing wcBilling `json:"billing"`
 	// Shipping holds the shipping address details.

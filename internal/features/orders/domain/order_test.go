@@ -11,17 +11,19 @@ import (
 func TestOrder_MarshalJSON(t *testing.T) {
 	now := time.Now()
 	order := Order{
-		ID:             "123",
-		Status:         OrderStatusCreated,
-		FirstName:      "John",
-		LastName:       "Doe",
-		Address:        "123 Main St",
-		City:           "New York",
-		State:          "NY",
-		Email:          "john@example.com",
-		TrackingNumber: "TRACK123",
-		Carrier:        "DHL",
-		CreatedAt:      now,
+		ID:            "123",
+		Status:        OrderStatusCreated,
+		FirstName:     "John",
+		LastName:      "Doe",
+		Address:       "123 Main St",
+		City:          "New York",
+		State:         "NY",
+		Email:         "john@example.com",
+		PaymentMethod: "Credit Card",
+		Tracking: []TrackingInfo{
+			{TrackingNumber: "TRACK123", TrackingProvider: "DHL"},
+		},
+		CreatedAt: now,
 		Items: []OrderItem{
 			{
 				Quantity: 1,
@@ -46,5 +48,6 @@ func TestOrder_MarshalJSON(t *testing.T) {
 func TestOrderStatus_Values(t *testing.T) {
 	assert.Equal(t, OrderStatus("CREATED"), OrderStatusCreated)
 	assert.Equal(t, OrderStatus("SHIPPED"), OrderStatusShipped)
-	assert.Equal(t, OrderStatus("COMPLETED"), OrderStatusCompleted)
+	assert.Equal(t, OrderStatus("CANCELLED"), OrderStatusCancelled)
+	assert.Equal(t, OrderStatus("PENDING"), OrderStatusPending)
 }

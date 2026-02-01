@@ -10,10 +10,12 @@ type OrderStatus string
 const (
 	// OrderStatusCreated indicates the order has been placed but not yet shipped.
 	OrderStatusCreated OrderStatus = "CREATED"
-	// OrderStatusShipped indicates the order has been handed to the carrier.
+	// OrderStatusShipped indicates the order has been completed and shipped.
 	OrderStatusShipped OrderStatus = "SHIPPED"
-	// OrderStatusCompleted indicates the order has been delivered and finalized.
-	OrderStatusCompleted OrderStatus = "COMPLETED"
+	// OrderStatusCancelled indicates the order has been cancelled.
+	OrderStatusCancelled OrderStatus = "CANCELLED"
+	// OrderStatusPending indicates the order is in any other intermediate state.
+	OrderStatusPending OrderStatus = "PENDING"
 )
 
 // TrackingInfo represents shipment tracking details for an order.
@@ -22,8 +24,6 @@ type TrackingInfo struct {
 	TrackingProvider string `json:"tracking_provider"`
 	// TrackingNumber is the unique tracking identifier provided by the carrier.
 	TrackingNumber string `json:"tracking_number"`
-	// DateShipped is the timestamp when the shipment was dispatched.
-	DateShipped time.Time `json:"date_shipped,omitempty"`
 }
 
 // Order represents a customer order in the system.
@@ -44,6 +44,8 @@ type Order struct {
 	State string `json:"state"`
 	// Email is the contact email for the customer.
 	Email string `json:"email"`
+	// PaymentMethod is the payment method used for the order.
+	PaymentMethod string `json:"payment_method"`
 	// Tracking contains shipment tracking information (can be multiple for partial shipments/returns).
 	Tracking []TrackingInfo `json:"tracking"`
 	// CreatedAt is the timestamp when the order was created.

@@ -1,0 +1,161 @@
+package adapter
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+	"tracker-scrapper/internal/core/logger"
+	"tracker-scrapper/internal/features/tracking/domain"
+
+	"github.com/go-rod/rod"
+	"go.uber.org/zap"
+)
+
+// InterrapidisimoAdapter handles tracking for Interrapidisimo courier via scraping.
+type InterrapidisimoAdapter struct {
+	baseURL string
+	logger  *zap.Logger
+}
+
+var interKnownCodes = map[int]bool{
+	1:  true, // Recibimos tu envío
+	2:  true, // En Centro Logístico Origen / Destino / Tránsito
+	3:  true, // Viajando a tu destino
+	4:  true, // Viajando a tu destino (variation)
+	6:  true, // En camino hacia ti
+	7:  true, // No logramos hacer la entrega (Incidence)
+	10: true, // Tu envío fue devuelto (Return)
+	11: true, // Tu envío fue entregado (Delivered)
+	16: true, // Archivada
+}
+
+// NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL.
+func NewInterrapidisimoAdapter(baseURL string) *InterrapidisimoAdapter {
+	return &InterrapidisimoAdapter{
+		baseURL: baseURL,
+		logger:  logger.Get(),
+	}
+}
+
+// interResponse represents the JSON structure from Interrapidisimo API.
+type interResponse struct {
+	EstadosGuia []struct {
+		EstadoGuia struct {
+			IdEstadoGuia          int    `json:"IdEstadoGuia"`
+			DescripcionEstadoGuia string `json:"DescripcionEstadoGuia"`
+			Ciudad                string `json:"Ciudad"`
+			FechaGrabacion        string `json:"FechaGrabacion"`
+		} `json:"EstadoGuia"`
+	} `json:"EstadosGuia"`
+	Guia struct {
+		NumeroGuia int64 `json:"NumeroGuia"`
+	} `json:"Guia"`
+	Success bool   `json:"Success"`
+	Message string `json:"Message"`
+}
+
+// GetTrackingHistory retrieves tracking history from Interrapidisimo using browser automation.
+func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
+	// Launch browser
+	browser := rod.New().MustConnect()
+	defer browser.MustClose()
+
+	// Open the page
+	page := browser.MustPage(a.baseURL)
+
+	// Wait for input field
+	page.MustElement("#inputGuide").MustWaitVisible()
+
+	// Setup request hijacking
+	router := page.HijackRequests()
+	defer router.MustStop()
+
+	done := make(chan []byte)
+
+	// Intercept the API call
+	router.MustAdd("*/ObtenerRastreoGuiasClientePost", func(ctx *rod.Hijack) {
+		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
+			return
+		}
+		done <- []byte(ctx.Response.Body())
+	})
+
+	go router.Run()
+
+	// Interact with the page
+	page.MustElement("#inputGuide").MustInput(trackingNumber)
+	page.MustElement(".search-button").MustClick()
+
+	// Wait for response with timeout
+	select {
+	case body := <-done:
+		// Attempt to unmarshal
+		var resp interResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("failed to parse courier response: %w", err)
+		}
+
+		if !resp.Success {
+			return nil, fmt.Errorf("courier error: %s", resp.Message)
+		}
+
+		return a.mapResponseToDomain(resp)
+
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for courier response")
+	}
+}
+
+// mapResponseToDomain converts Interrapidisimo response to domain structure.
+func (a *InterrapidisimoAdapter) mapResponseToDomain(resp interResponse) (*domain.TrackingHistory, error) {
+	history := &domain.TrackingHistory{
+		GlobalStatus: domain.TrackingStatusProcessing, // Default
+		History:      make([]domain.TrackingEvent, 0),
+	}
+
+	for _, item := range resp.EstadosGuia {
+		state := item.EstadoGuia
+
+		// Parse date
+		// Format example: "2025-05-10T13:06:23.02" or "2025-04-30T18:53:15.917"
+		// We try standard RFC3339-like layouts
+		date, _ := time.Parse("2006-01-02T15:04:05", state.FechaGrabacion) // Simplification, might need robust parsing
+
+		event := domain.TrackingEvent{
+			Date: date,
+			Text: state.DescripcionEstadoGuia,
+			City: state.Ciudad,
+			Code: strconv.Itoa(state.IdEstadoGuia),
+		}
+		history.History = append(history.History, event)
+
+		// Determine Global Status based on latest event or specific codes
+		// Code 10: RETURN
+		// Code 11: DELIVERED
+		switch state.IdEstadoGuia {
+		case 10:
+			history.GlobalStatus = domain.TrackingStatusReturn
+		case 11:
+			history.GlobalStatus = domain.TrackingStatusCompleted
+		case 7:
+			history.GlobalStatus = domain.TrackingStatusIncidence
+		}
+
+		if !interKnownCodes[state.IdEstadoGuia] {
+			a.logger.Warn("Unknown Interrapidisimo status code encountered",
+				zap.Int("code", state.IdEstadoGuia),
+				zap.String("description", state.DescripcionEstadoGuia),
+			)
+		}
+	}
+
+	return history, nil
+}
+
+// SupportsCourier returns true if this adapter supports interrapidisimo_co.
+func (a *InterrapidisimoAdapter) SupportsCourier(courierName string) bool {
+	return courierName == "interrapidisimo_co"
+}

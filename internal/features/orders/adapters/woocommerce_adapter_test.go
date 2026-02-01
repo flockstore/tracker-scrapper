@@ -20,6 +20,7 @@ func TestWooCommerceAdapter_GetOrder_Success(t *testing.T) {
 		"id": 123,
 		"status": "processing",
 		"date_created": "2023-10-25T10:00:00",
+		"payment_method_title": "Credit Card",
 		"billing": {
 			"first_name": "John",
 			"last_name": "Doe",
@@ -77,6 +78,7 @@ func TestWooCommerceAdapter_GetOrder_Success(t *testing.T) {
 	assert.Equal(t, "Test City", order.City)
 	assert.Equal(t, "TS", order.State)
 	assert.Equal(t, "john.doe@example.com", order.Email)
+	assert.Equal(t, "Credit Card", order.PaymentMethod)
 	assert.Empty(t, order.Tracking)
 
 	require.Len(t, order.Items, 1)
@@ -250,8 +252,12 @@ func TestWooCommerceAdapter_GetOrder_MappedStatus(t *testing.T) {
 		{"pending", false, domain.OrderStatusCreated},
 		{"processing", false, domain.OrderStatusCreated},
 		{"completed", false, domain.OrderStatusShipped},
+		{"cancelled", false, domain.OrderStatusCancelled},
+		{"refunded", false, domain.OrderStatusCancelled},
+		{"failed", false, domain.OrderStatusCancelled},
+		{"on-hold", false, domain.OrderStatusCreated},
 		{"processing", true, domain.OrderStatusShipped},
-		{"unknown", false, domain.OrderStatusCreated},
+		{"unknown", false, domain.OrderStatusPending},
 	}
 
 	for _, tt := range tests {

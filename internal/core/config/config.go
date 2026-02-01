@@ -26,6 +26,9 @@ type AppConfig struct {
 
 	// WooCommerce holds the WooCommerce API configuration.
 	WooCommerce WooCommerceConfig `mapstructure:",squash"`
+
+	// Couriers holds the courier tracking URL configuration.
+	Couriers CourierConfig `mapstructure:",squash"`
 }
 
 // WooCommerceConfig holds the credentials for the WooCommerce Store.
@@ -44,6 +47,16 @@ type DatabaseConfig struct {
 	Host string `mapstructure:"DB_HOST" default:"localhost"`
 	// Port is the database connection port.
 	Port int `mapstructure:"DB_PORT" default:"5432"`
+}
+
+// CourierConfig holds courier tracking API URLs.
+type CourierConfig struct {
+	// CoordinadoraURL is the Coordinadora tracking API base URL.
+	CoordinadoraURL string `mapstructure:"COURIER_COORDINADORA_CO" required:"true"`
+	// ServientregaURL is the Servientrega tracking API base URL.
+	ServientregaURL string `mapstructure:"COURIER_SERVIENTREGA_CO" required:"true"`
+	// InterrapidisimoURL is the Interrapidisimo tracking API base URL.
+	InterrapidisimoURL string `mapstructure:"COURIER_INTERRAPIDISIMO_CO" required:"true"`
 }
 
 // Load loads configuration from .env files and environment variables.

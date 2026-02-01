@@ -6,9 +6,13 @@ import (
 	"tracker-scrapper/internal/core/config"
 	"tracker-scrapper/internal/core/logger"
 	"tracker-scrapper/internal/core/server"
-	adapter "tracker-scrapper/internal/features/orders/adapters"
-	"tracker-scrapper/internal/features/orders/handler"
-	"tracker-scrapper/internal/features/orders/service"
+	orderadapter "tracker-scrapper/internal/features/orders/adapters"
+	orderhandler "tracker-scrapper/internal/features/orders/handler"
+	orderservice "tracker-scrapper/internal/features/orders/service"
+	trackingadapter "tracker-scrapper/internal/features/tracking/adapters"
+	trackinghandler "tracker-scrapper/internal/features/tracking/handler"
+	"tracker-scrapper/internal/features/tracking/ports"
+	trackingservice "tracker-scrapper/internal/features/tracking/service"
 
 	"go.uber.org/zap"
 )
@@ -38,21 +42,37 @@ func main() {
 		zap.String("log_level", cfg.LogLevel),
 	)
 
-	// Initialize Adapter and run Health Check
-	wcAdapter := adapter.NewWooCommerceAdapter(cfg.WooCommerce)
+	// Initialize Order Adapter and run Health Check
+	wcAdapter := orderadapter.NewWooCommerceAdapter(cfg.WooCommerce)
 	if err := wcAdapter.HealthCheck(); err != nil {
 		l.Fatal("WooCommerce Health Check Failed", zap.Error(err))
 	}
 	l.Info("WooCommerce connection verified")
 
-	// Initialize Service & Handler
-	orderService := service.NewOrderService(wcAdapter)
-	orderHandler := handler.NewOrderHandler(orderService)
+	// Initialize Order Service & Handler
+	orderService := orderservice.NewOrderService(wcAdapter)
+	orderHandler := orderhandler.NewOrderHandler(orderService)
+
+	// Initialize Tracking Providers
+	coordinadoraAdapter := trackingadapter.NewCoordinadoraAdapter(cfg.Couriers.CoordinadoraURL)
+	servientregaAdapter := trackingadapter.NewServientregaAdapter(cfg.Couriers.ServientregaURL)
+	interrapidisimoAdapter := trackingadapter.NewInterrapidisimoAdapter(cfg.Couriers.InterrapidisimoURL)
+
+	trackingProviders := []ports.TrackingProvider{
+		coordinadoraAdapter,
+		servientregaAdapter,
+		interrapidisimoAdapter,
+	}
+
+	// Initialize Tracking Service & Handler
+	trackingSvc := trackingservice.NewTrackingService(trackingProviders)
+	trackingHdl := trackinghandler.NewTrackingHandler(trackingSvc)
 
 	srv := server.New(cfg)
 
 	// Register Routes
 	srv.App.Get("/orders/:id", orderHandler.GetOrder)
+	srv.App.Get("/tracking/:number", trackingHdl.GetTrackingHistory)
 
 	if err := srv.Run(); err != nil {
 		l.Fatal("Server failed to start", zap.Error(err))
