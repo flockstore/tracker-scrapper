@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"tracker-scrapper/internal/features/tracking/domain"
 	"tracker-scrapper/internal/features/tracking/ports"
@@ -31,6 +33,40 @@ func (m *mockTrackingProvider) SupportsCourier(courierName string) bool {
 	return courierName == m.supportedCourier
 }
 
+// mockCache is a simple in-memory cache for testing.
+type mockCache struct {
+	data map[string][]byte
+}
+
+func newMockCache() *mockCache {
+	return &mockCache{data: make(map[string][]byte)}
+}
+
+func (m *mockCache) Get(ctx context.Context, key string) ([]byte, error) {
+	if val, ok := m.data[key]; ok {
+		return val, nil
+	}
+	return nil, errors.New("key not found")
+}
+
+func (m *mockCache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *mockCache) Delete(ctx context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
+
+func (m *mockCache) Ping(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockCache) Close() error {
+	return nil
+}
+
 // TestTrackingService_GetTrackingHistory_Success verifies successful tracking retrieval.
 func TestTrackingService_GetTrackingHistory_Success(t *testing.T) {
 	expectedHistory := &domain.TrackingHistory{
@@ -43,7 +79,9 @@ func TestTrackingService_GetTrackingHistory_Success(t *testing.T) {
 		returnHistory:    expectedHistory,
 	}
 
-	svc := NewTrackingService([]ports.TrackingProvider{provider})
+	mockCache := newMockCache()
+
+	svc := NewTrackingService([]ports.TrackingProvider{provider}, mockCache, 30*time.Second)
 
 	history, err := svc.GetTrackingHistory("12345", "coordinadora_co")
 
@@ -57,7 +95,9 @@ func TestTrackingService_GetTrackingHistory_CourierNotSupported(t *testing.T) {
 		supportedCourier: "coordinadora_co",
 	}
 
-	svc := NewTrackingService([]ports.TrackingProvider{provider})
+	mockCache := newMockCache()
+
+	svc := NewTrackingService([]ports.TrackingProvider{provider}, mockCache, 30*time.Second)
 
 	history, err := svc.GetTrackingHistory("12345", "unknown_courier")
 
@@ -73,7 +113,9 @@ func TestTrackingService_GetTrackingHistory_ProviderError(t *testing.T) {
 		returnError:      providerErr,
 	}
 
-	svc := NewTrackingService([]ports.TrackingProvider{provider})
+	mockCache := newMockCache()
+
+	svc := NewTrackingService([]ports.TrackingProvider{provider}, mockCache, 30*time.Second)
 
 	history, err := svc.GetTrackingHistory("12345", "coordinadora_co")
 
@@ -100,7 +142,9 @@ func TestTrackingService_GetTrackingHistory_MultipleProviders(t *testing.T) {
 		},
 	}
 
-	svc := NewTrackingService([]ports.TrackingProvider{provider1, provider2})
+	mockCache := newMockCache()
+
+	svc := NewTrackingService([]ports.TrackingProvider{provider1, provider2}, mockCache, 30*time.Second)
 
 	history, err := svc.GetTrackingHistory("67890", "servientrega_co")
 

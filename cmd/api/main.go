@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
+	"tracker-scrapper/internal/core/cache"
 	"tracker-scrapper/internal/core/config"
 	"tracker-scrapper/internal/core/logger"
 	"tracker-scrapper/internal/core/server"
@@ -49,8 +52,23 @@ func main() {
 	}
 	l.Info("WooCommerce connection verified")
 
-	// Initialize Order Service & Handler
-	orderService := orderservice.NewOrderService(wcAdapter)
+	// Initialize Redis Cache
+	redisCache, err := cache.NewRedisAdapter(cfg.Cache.RedisURL)
+	if err != nil {
+		l.Fatal("Failed to initialize Redis", zap.Error(err))
+	}
+	defer redisCache.Close()
+
+	// Health Check Redis
+	ctx := context.Background()
+	if err := redisCache.Ping(ctx); err != nil {
+		l.Fatal("Redis Health Check Failed", zap.Error(err))
+	}
+	l.Info("Redis connection verified")
+
+	// Initialize Order Service & Handler with cache
+	orderCacheTTL := time.Duration(cfg.Cache.OrderTTL) * time.Second
+	orderService := orderservice.NewOrderService(wcAdapter, redisCache, orderCacheTTL)
 	orderHandler := orderhandler.NewOrderHandler(orderService)
 
 	// Initialize Tracking Providers
@@ -64,8 +82,9 @@ func main() {
 		interrapidisimoAdapter,
 	}
 
-	// Initialize Tracking Service & Handler
-	trackingSvc := trackingservice.NewTrackingService(trackingProviders)
+	// Initialize Tracking Service & Handler with cache
+	trackingCacheTTL := time.Duration(cfg.Cache.TrackingTTL) * time.Second
+	trackingSvc := trackingservice.NewTrackingService(trackingProviders, redisCache, trackingCacheTTL)
 	trackingHdl := trackinghandler.NewTrackingHandler(trackingSvc)
 
 	srv := server.New(cfg)

@@ -29,6 +29,9 @@ type AppConfig struct {
 
 	// Couriers holds the courier tracking URL configuration.
 	Couriers CourierConfig `mapstructure:",squash"`
+
+	// Cache holds the Redis cache configuration.
+	Cache CacheConfig `mapstructure:",squash"`
 }
 
 // WooCommerceConfig holds the credentials for the WooCommerce Store.
@@ -57,6 +60,16 @@ type CourierConfig struct {
 	ServientregaURL string `mapstructure:"COURIER_SERVIENTREGA_CO" required:"true"`
 	// InterrapidisimoURL is the Interrapidisimo tracking API base URL.
 	InterrapidisimoURL string `mapstructure:"COURIER_INTERRAPIDISIMO_CO" required:"true"`
+}
+
+// CacheConfig holds Redis cache configuration.
+type CacheConfig struct {
+	// RedisURL is the Redis connection URL (format: redis://[:password@]host[:port][/database]).
+	RedisURL string `mapstructure:"CACHE_REDIS_URL" required:"true"`
+	// OrderTTL is the TTL in seconds for order cache entries.
+	OrderTTL int `mapstructure:"CACHE_ORDER_TTL" default:"3600"`
+	// TrackingTTL is the TTL in seconds for tracking cache entries.
+	TrackingTTL int `mapstructure:"CACHE_TRACKING_TTL" default:"1800"`
 }
 
 // Load loads configuration from .env files and environment variables.
