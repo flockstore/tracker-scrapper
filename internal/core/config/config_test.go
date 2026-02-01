@@ -20,6 +20,7 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Setenv("COURIER_COORDINADORA_CO", "https://coordinadora.test")
 	os.Setenv("COURIER_SERVIENTREGA_CO", "https://servientrega.test")
 	os.Setenv("COURIER_INTERRAPIDISIMO_CO", "https://interrapidisimo.test")
+	os.Setenv("CACHE_REDIS_URL", "redis://localhost:6379")
 	defer func() {
 		os.Unsetenv("WC_URL")
 		os.Unsetenv("WC_CONSUMER_KEY")
@@ -27,6 +28,7 @@ func TestLoad_Defaults(t *testing.T) {
 		os.Unsetenv("COURIER_COORDINADORA_CO")
 		os.Unsetenv("COURIER_SERVIENTREGA_CO")
 		os.Unsetenv("COURIER_INTERRAPIDISIMO_CO")
+		os.Unsetenv("CACHE_REDIS_URL")
 	}()
 
 	cfg, err := Load(".")
@@ -49,6 +51,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	os.Setenv("COURIER_COORDINADORA_CO", "https://coordinadora.test")
 	os.Setenv("COURIER_SERVIENTREGA_CO", "https://servientrega.test")
 	os.Setenv("COURIER_INTERRAPIDISIMO_CO", "https://interrapidisimo.test")
+	os.Setenv("CACHE_REDIS_URL", "redis://localhost:6379")
 	defer func() {
 		os.Unsetenv("APP_ENV")
 		os.Unsetenv("LOG_LEVEL")
@@ -59,6 +62,7 @@ func TestLoad_EnvVars(t *testing.T) {
 		os.Unsetenv("COURIER_COORDINADORA_CO")
 		os.Unsetenv("COURIER_SERVIENTREGA_CO")
 		os.Unsetenv("COURIER_INTERRAPIDISIMO_CO")
+		os.Unsetenv("CACHE_REDIS_URL")
 	}()
 
 	cfg, err := Load(".")
@@ -83,6 +87,7 @@ WC_CONSUMER_SECRET=cs_staging
 COURIER_COORDINADORA_CO=https://coordinadora.test
 COURIER_SERVIENTREGA_CO=https://servientrega.test
 COURIER_INTERRAPIDISIMO_CO=https://interrapidisimo.test
+CACHE_REDIS_URL=redis://localhost:6379
 `)
 	err := os.WriteFile(".env", content, 0644)
 	require.NoError(t, err)

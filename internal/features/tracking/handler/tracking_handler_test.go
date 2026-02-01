@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"tracker-scrapper/internal/features/tracking/domain"
 	"tracker-scrapper/internal/features/tracking/ports"
@@ -34,6 +37,19 @@ func (m *mockTrackingProvider) SupportsCourier(courierName string) bool {
 	return courierName == m.supportedCourier
 }
 
+// mockCache for testing.
+type mockCache struct{}
+
+func (m *mockCache) Get(ctx context.Context, key string) ([]byte, error) {
+	return nil, errors.New("not found")
+}
+func (m *mockCache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	return nil
+}
+func (m *mockCache) Delete(ctx context.Context, key string) error { return nil }
+func (m *mockCache) Ping(ctx context.Context) error               { return nil }
+func (m *mockCache) Close() error                                 { return nil }
+
 // TestTrackingHandler_GetTrackingHistory_Success verifies successful tracking retrieval.
 func TestTrackingHandler_GetTrackingHistory_Success(t *testing.T) {
 	expectedHistory := &domain.TrackingHistory{
@@ -46,7 +62,7 @@ func TestTrackingHandler_GetTrackingHistory_Success(t *testing.T) {
 		returnHistory:    expectedHistory,
 	}
 
-	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{provider})
+	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{provider}, &mockCache{}, 30*time.Second)
 	handler := NewTrackingHandler(trackingSvc)
 
 	app := fiber.New()
@@ -70,7 +86,7 @@ func TestTrackingHandler_GetTrackingHistory_Success(t *testing.T) {
 
 // TestTrackingHandler_GetTrackingHistory_MissingTrackingNumber verifies tracking number validation.
 func TestTrackingHandler_GetTrackingHistory_MissingTrackingNumber(t *testing.T) {
-	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{})
+	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{}, &mockCache{}, 30*time.Second)
 	handler := NewTrackingHandler(trackingSvc)
 
 	app := fiber.New()
@@ -89,7 +105,7 @@ func TestTrackingHandler_GetTrackingHistory_MissingTrackingNumber(t *testing.T) 
 
 // TestTrackingHandler_GetTrackingHistory_MissingCourier verifies courier parameter validation.
 func TestTrackingHandler_GetTrackingHistory_MissingCourier(t *testing.T) {
-	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{})
+	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{}, &mockCache{}, 30*time.Second)
 	handler := NewTrackingHandler(trackingSvc)
 
 	app := fiber.New()
@@ -118,7 +134,7 @@ func TestTrackingHandler_GetTrackingHistory_CourierNotSupported(t *testing.T) {
 		supportedCourier: "coordinadora_co",
 	}
 
-	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{provider})
+	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{provider}, &mockCache{}, 30*time.Second)
 	handler := NewTrackingHandler(trackingSvc)
 
 	app := fiber.New()
