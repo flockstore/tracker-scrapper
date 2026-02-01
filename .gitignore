@@ -32,11 +32,20 @@ config.ini
 logs/*
 logs
 
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+
 tracker-scrapper
 tracker-scrapper.exe
 
-# Swagger
-docs/swagger
+# Swagger generated files
+docs/swagger/
 
 *.log
+
+# Ignore generated JSON files
 *.json
