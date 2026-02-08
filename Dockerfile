@@ -9,7 +9,10 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6
+RUN /go/bin/swag init -g cmd/api/main.go -o docs/swagger
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tracking-scrapper.go ./cmd/api
 
 FROM debian:bookworm-slim AS runtime
 
@@ -22,9 +25,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=builder /out/api /app/api
+COPY --from=builder /out/tracking-scrapper.go /app/tracking-scrapper.go
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/api"]
+ENTRYPOINT ["/app/tracking-scrapper.go"]
 CMD ["-rod=bin=/usr/bin/chromium"]
