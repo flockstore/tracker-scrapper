@@ -75,19 +75,32 @@ func main() {
 	orderService := orderservice.NewOrderService(wcAdapter, redisCache, orderCacheTTL)
 	orderHandler := orderhandler.NewOrderHandler(orderService)
 
-	// Initialize Tracking Providers
-	coordinadoraAdapter := trackingadapter.NewCoordinadoraAdapter(
-		cfg.Couriers.CoordinadoraURL,
-		cfg.Couriers.CoordinadoraProxyURL,
-	)
-	servientregaAdapter := trackingadapter.NewServientregaAdapter(
-		cfg.Couriers.ServientregaURL,
-		cfg.Couriers.ServientregaProxyURL,
-	)
-	interrapidisimoAdapter := trackingadapter.NewInterrapidisimoAdapter(
-		cfg.Couriers.InterrapidisimoURL,
-		cfg.Couriers.InterrapidisimoProxyURL,
-	)
+	// Initialize Tracking Providers with proxy settings
+	coordinadoraProxy := trackingadapter.ProxySettings{
+		Enabled:  cfg.Proxy.Coordinadora,
+		Hostname: cfg.Proxy.Hostname,
+		Port:     cfg.Proxy.Port,
+		Username: cfg.Proxy.Username,
+		Password: cfg.Proxy.Password,
+	}
+	servientregaProxy := trackingadapter.ProxySettings{
+		Enabled:  cfg.Proxy.Servientrega,
+		Hostname: cfg.Proxy.Hostname,
+		Port:     cfg.Proxy.Port,
+		Username: cfg.Proxy.Username,
+		Password: cfg.Proxy.Password,
+	}
+	interrapidisimoProxy := trackingadapter.ProxySettings{
+		Enabled:  cfg.Proxy.Interrapidisimo,
+		Hostname: cfg.Proxy.Hostname,
+		Port:     cfg.Proxy.Port,
+		Username: cfg.Proxy.Username,
+		Password: cfg.Proxy.Password,
+	}
+
+	coordinadoraAdapter := trackingadapter.NewCoordinadoraAdapter(cfg.Couriers.CoordinadoraURL, coordinadoraProxy)
+	servientregaAdapter := trackingadapter.NewServientregaAdapter(cfg.Couriers.ServientregaURL, servientregaProxy)
+	interrapidisimoAdapter := trackingadapter.NewInterrapidisimoAdapter(cfg.Couriers.InterrapidisimoURL, interrapidisimoProxy)
 
 	trackingProviders := []ports.TrackingProvider{
 		coordinadoraAdapter,

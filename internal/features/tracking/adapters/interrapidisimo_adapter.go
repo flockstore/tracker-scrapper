@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -19,9 +18,9 @@ import (
 
 // InterrapidisimoAdapter handles tracking for Interrapidisimo courier via scraping.
 type InterrapidisimoAdapter struct {
-	baseURL  string
-	proxyURL string
-	logger   *zap.Logger
+	baseURL string
+	proxy   ProxySettings
+	logger  *zap.Logger
 }
 
 var interKnownCodes = map[int]bool{
@@ -36,13 +35,12 @@ var interKnownCodes = map[int]bool{
 	16: true, // Archivada
 }
 
-// NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL and optional proxy URL.
-// If proxyURL is empty, no proxy will be used.
-func NewInterrapidisimoAdapter(baseURL, proxyURL string) *InterrapidisimoAdapter {
+// NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL and proxy settings.
+func NewInterrapidisimoAdapter(baseURL string, proxy ProxySettings) *InterrapidisimoAdapter {
 	return &InterrapidisimoAdapter{
-		baseURL:  baseURL,
-		proxyURL: proxyURL,
-		logger:   logger.Get(),
+		baseURL: baseURL,
+		proxy:   proxy,
+		logger:  logger.Get(),
 	}
 }
 
@@ -69,12 +67,9 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Parse proxy URL to extract host:port and credentials separately
-	proxyHost, proxyUser, proxyPass := a.parseProxyURL()
-
 	a.logger.Debug("Launching browser...",
-		zap.String("proxy_host", proxyHost),
-		zap.Bool("has_auth", proxyUser != ""),
+		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
+		zap.String("proxy_host", a.proxy.HostPort()),
 	)
 
 	// Configure launcher
@@ -83,9 +78,9 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 		Headless(true).
 		NoSandbox(true)
 
-	// Configure proxy if provided (use only host:port, not credentials)
-	if proxyHost != "" {
-		l = l.Proxy(proxyHost)
+	// Configure proxy if enabled
+	if a.proxy.HasProxy() {
+		l = l.Proxy(a.proxy.HostPort())
 		a.logger.Debug("Browser configured with proxy")
 	}
 
@@ -101,8 +96,8 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	defer browser.Close()
 
 	// Handle proxy authentication if credentials were provided
-	if proxyUser != "" && proxyPass != "" {
-		go browser.MustHandleAuth(proxyUser, proxyPass)()
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)()
 		a.logger.Debug("Proxy authentication configured")
 	}
 
@@ -201,26 +196,4 @@ func (a *InterrapidisimoAdapter) mapResponseToDomain(resp interResponse) (*domai
 // SupportsCourier returns true if this adapter supports interrapidisimo_co.
 func (a *InterrapidisimoAdapter) SupportsCourier(courierName string) bool {
 	return courierName == "interrapidisimo_co"
-}
-
-// parseProxyURL extracts host:port and credentials from the proxy URL.
-func (a *InterrapidisimoAdapter) parseProxyURL() (host, username, password string) {
-	if a.proxyURL == "" {
-		return "", "", ""
-	}
-
-	parsed, err := url.Parse(a.proxyURL)
-	if err != nil {
-		a.logger.Warn("Failed to parse proxy URL", zap.Error(err))
-		return "", "", ""
-	}
-
-	host = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
-
-	if parsed.User != nil {
-		username = parsed.User.Username()
-		password, _ = parsed.User.Password()
-	}
-
-	return host, username, password
 }

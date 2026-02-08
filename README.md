@@ -86,9 +86,11 @@ COURIER_SERVIENTREGA_CO=https://mobile.servientrega.com/WebSitePortal/RastreoEnv
 COURIER_INTERRAPIDISIMO_CO=https://www3.interrapidisimo.com/SiguetuEnvio/shipment
 
 # Proxy Configuration (Optional - for non-Colombian servers)
-# COURIER_COORDINADORA_PROXY=http://user:pass@proxy:port
-# COURIER_SERVIENTREGA_PROXY=http://user:pass@proxy:port
-# COURIER_INTERRAPIDISIMO_PROXY=http://user:pass@proxy:port
+# PROXY_HOSTNAME=geo.iproyal.com
+# PROXY_PORT=12321
+# PROXY_USERNAME=your_username
+# PROXY_PASSWORD=your_password
+# PROXY_SERVIENTREGA=true
 
 # Redis Cache Configuration (REQUIRED)
 CACHE_REDIS_URL=redis://localhost:6379
@@ -139,15 +141,30 @@ curl -x http://user:pass@proxy:port --connect-timeout 15 -I \
 
 ### Configuration
 
-Set the proxy URL in your `.env` file:
+Set proxy credentials and enable per-courier in your `.env` file:
 
 ```env
-# IPRoyal example with Colombia geo-targeting
-COURIER_SERVIENTREGA_PROXY=http://user-country-co:password@geo.iproyal.com:12321
+# Shared proxy credentials
+PROXY_HOSTNAME=geo.iproyal.com
+PROXY_PORT=12321
+PROXY_USERNAME=your_username
+PROXY_PASSWORD=your_password_country-co
 
-# Standard HTTP proxy example
-COURIER_COORDINADORA_PROXY=http://username:password@proxy-host:port
+# Enable proxy per courier (true/false)
+PROXY_SERVIENTREGA=true
+PROXY_COORDINADORA=false
+PROXY_INTERRAPIDISIMO=false
 ```
+
+| Variable | Description |
+|----------|-------------|
+| `PROXY_HOSTNAME` | Proxy server hostname (e.g., `geo.iproyal.com`) |
+| `PROXY_PORT` | Proxy server port (e.g., `12321`) |
+| `PROXY_USERNAME` | Proxy authentication username |
+| `PROXY_PASSWORD` | Proxy authentication password (include geo-targeting suffix like `_country-co`) |
+| `PROXY_SERVIENTREGA` | Enable proxy for Servientrega (`true`/`false`) |
+| `PROXY_COORDINADORA` | Enable proxy for Coordinadora (`true`/`false`) |
+| `PROXY_INTERRAPIDISIMO` | Enable proxy for Interrapidisimo (`true`/`false`) |
 
 > **⚠️ Important**: Use your own proxy and test with curl commands first. Take advantage of free trials from proxy providers before making any payment.
 

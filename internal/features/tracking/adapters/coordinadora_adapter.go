@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -19,9 +18,9 @@ import (
 
 // CoordinadoraAdapter handles tracking for Coordinadora courier via scraping.
 type CoordinadoraAdapter struct {
-	baseURL  string
-	proxyURL string
-	logger   *zap.Logger
+	baseURL string
+	proxy   ProxySettings
+	logger  *zap.Logger
 }
 
 var coordKnownCodes = map[string]bool{
@@ -42,13 +41,12 @@ var coordKnownCodes = map[string]bool{
 	"post_binded": true, // Nueva guia generada
 }
 
-// NewCoordinadoraAdapter creates a new CoordinadoraAdapter with the given base URL and optional proxy URL.
-// If proxyURL is empty, no proxy will be used.
-func NewCoordinadoraAdapter(baseURL, proxyURL string) *CoordinadoraAdapter {
+// NewCoordinadoraAdapter creates a new CoordinadoraAdapter with the given base URL and proxy settings.
+func NewCoordinadoraAdapter(baseURL string, proxy ProxySettings) *CoordinadoraAdapter {
 	return &CoordinadoraAdapter{
-		baseURL:  baseURL,
-		proxyURL: proxyURL,
-		logger:   logger.Get(),
+		baseURL: baseURL,
+		proxy:   proxy,
+		logger:  logger.Get(),
 	}
 }
 
@@ -78,12 +76,9 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		}
 	}
 
-	// Parse proxy URL to extract host:port and credentials separately
-	proxyHost, proxyUser, proxyPass := a.parseProxyURL()
-
 	a.logger.Debug("Launching browser...",
-		zap.String("proxy_host", proxyHost),
-		zap.Bool("has_auth", proxyUser != ""),
+		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
+		zap.String("proxy_host", a.proxy.HostPort()),
 	)
 
 	// Configure launcher
@@ -92,9 +87,9 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		Headless(true).
 		NoSandbox(true)
 
-	// Configure proxy if provided (use only host:port, not credentials)
-	if proxyHost != "" {
-		l = l.Proxy(proxyHost)
+	// Configure proxy if enabled
+	if a.proxy.HasProxy() {
+		l = l.Proxy(a.proxy.HostPort())
 		a.logger.Debug("Browser configured with proxy")
 	}
 
@@ -110,8 +105,8 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	defer browser.Close()
 
 	// Handle proxy authentication if credentials were provided
-	if proxyUser != "" && proxyPass != "" {
-		go browser.MustHandleAuth(proxyUser, proxyPass)()
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)()
 		a.logger.Debug("Proxy authentication configured")
 	}
 
@@ -198,26 +193,4 @@ func (a *CoordinadoraAdapter) mapResponseToDomain(resp coordinadoraResponse) (*d
 // SupportsCourier returns true if this adapter supports coordinadora_co.
 func (a *CoordinadoraAdapter) SupportsCourier(courierName string) bool {
 	return courierName == "coordinadora_co"
-}
-
-// parseProxyURL extracts host:port and credentials from the proxy URL.
-func (a *CoordinadoraAdapter) parseProxyURL() (host, username, password string) {
-	if a.proxyURL == "" {
-		return "", "", ""
-	}
-
-	parsed, err := url.Parse(a.proxyURL)
-	if err != nil {
-		a.logger.Warn("Failed to parse proxy URL", zap.Error(err))
-		return "", "", ""
-	}
-
-	host = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
-
-	if parsed.User != nil {
-		username = parsed.User.Username()
-		password, _ = parsed.User.Password()
-	}
-
-	return host, username, password
 }

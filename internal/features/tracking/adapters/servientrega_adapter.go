@@ -18,42 +18,57 @@ import (
 	"go.uber.org/zap"
 )
 
-// ServientregaAdapter handles tracking for Servientrega courier.
-type ServientregaAdapter struct {
-	baseURL  string
-	proxyURL string
-	logger   *zap.Logger
+// ProxySettings contains proxy configuration for adapters.
+type ProxySettings struct {
+	Enabled  bool
+	Hostname string
+	Port     int
+	Username string
+	Password string
 }
 
-// NewServientregaAdapter creates a new ServientregaAdapter with the given base URL and optional proxy URL.
-// If proxyURL is empty, no proxy will be used.
-func NewServientregaAdapter(baseURL, proxyURL string) *ServientregaAdapter {
+// HasProxy returns true if proxy is enabled and configured.
+func (p ProxySettings) HasProxy() bool {
+	return p.Enabled && p.Hostname != "" && p.Port > 0
+}
+
+// HostPort returns the proxy host:port string (e.g., "http://geo.iproyal.com:12321").
+func (p ProxySettings) HostPort() string {
+	if !p.HasProxy() {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%d", p.Hostname, p.Port)
+}
+
+// FullURL returns the full proxy URL with credentials (for HTTP client).
+func (p ProxySettings) FullURL() string {
+	if !p.HasProxy() {
+		return ""
+	}
+	if p.Username != "" && p.Password != "" {
+		return fmt.Sprintf("http://%s:%s@%s:%d", p.Username, p.Password, p.Hostname, p.Port)
+	}
+	return p.HostPort()
+}
+
+// ServientregaAdapter handles tracking for Servientrega courier.
+type ServientregaAdapter struct {
+	baseURL     string
+	proxy       ProxySettings
+	courierName string
+	logger      *zap.Logger
+}
+
+// NewServientregaAdapter creates a new ServientregaAdapter with the given base URL and proxy settings.
+func NewServientregaAdapter(baseURL string, proxy ProxySettings) *ServientregaAdapter {
 	return &ServientregaAdapter{
-		baseURL:  baseURL,
-		proxyURL: proxyURL,
-		logger:   logger.Get(),
+		baseURL:     baseURL,
+		proxy:       proxy,
+		courierName: "servientrega_co",
+		logger:      logger.Get(),
 	}
 }
 
-// servientregaResponse represents the JSON structure returned by the API.
-type servientregaResponse struct {
-	Results []struct {
-		NumeroGuia       string `json:"numeroGuia"`
-		EstadoActual     string `json:"estadoActual"`
-		FechaEnvio       string `json:"fechaEnvio"` // Format: "31/01/2026 12:51 "
-		FechaRealEntrega string `json:"fechaRealEntrega"`
-		Movimientos      []struct {
-			Fecha      string `json:"fecha"`
-			Movimiento string `json:"movimiento"`
-			Ubicacion  string `json:"ubicacion"`
-			Novedad    string `json:"Novedad"`
-			Estado     string `json:"estado"`    // e.g., "Cerrado"
-			IdProceso  string `json:"IdProceso"` // Process ID used for Code field
-		} `json:"movimientos"`
-	} `json:"Results"`
-}
-
-// GetTrackingHistory retrieves tracking history from Servientrega.
 // GetTrackingHistory retrieves tracking history from Servientrega.
 func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
 	// Create a master context with timeout to prevent hanging
@@ -73,13 +88,9 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
-	// Parse proxy URL to extract host:port and credentials separately
-	// Chromium's --proxy-server flag doesn't support embedded credentials
-	proxyHost, proxyUser, proxyPass := a.parseProxyURL()
-
 	a.logger.Debug("Launching browser...",
-		zap.String("proxy_host", proxyHost),
-		zap.Bool("has_auth", proxyUser != ""),
+		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
+		zap.String("proxy_host", a.proxy.HostPort()),
 	)
 	// Configure launcher for Docker environment (needs --no-sandbox)
 	// Use Context(ctx) to ensure launch respects timeout
@@ -90,9 +101,9 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		NoSandbox(true).
 		Set("user-agent", stealthUA) // Set User-Agent in browser
 
-	// Configure proxy if provided (use only host:port, not credentials)
-	if proxyHost != "" {
-		l = l.Proxy(proxyHost)
+	// Configure proxy if enabled (use only host:port, not credentials)
+	if a.proxy.HasProxy() {
+		l = l.Proxy(a.proxy.HostPort())
 		a.logger.Debug("Browser configured with proxy")
 	}
 
@@ -118,8 +129,8 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	page = page.Context(ctx)
 
 	// Handle proxy authentication if credentials were provided
-	if proxyUser != "" && proxyPass != "" {
-		go browser.MustHandleAuth(proxyUser, proxyPass)()
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)()
 		a.logger.Debug("Proxy authentication configured")
 	}
 
@@ -141,137 +152,141 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 			a.logger.Error("Failed to load response", zap.Error(err))
 			return
 		}
-		body := string(ctx.Response.Body())
-		a.logger.Debug("Received response body", zap.Int("length", len(body)))
-		done <- body
+		done <- ctx.Response.Body()
 	}); err != nil {
-		return nil, fmt.Errorf("failed to add router handler: %w", err)
+		return nil, fmt.Errorf("failed to add hijack: %w", err)
 	}
 
 	go router.Run()
 
-	// Retry logic for navigation to handle timeouts
-	maxRetries := 3
+	// Navigate with retry
+	const maxRetries = 3
 	var navErr error
-	for i := 0; i < maxRetries; i++ {
-		a.logger.Debug("Navigating to URL",
-			zap.String("url", url),
-			zap.Int("attempt", i+1),
-			zap.Int("max_retries", maxRetries),
-		)
-
-		// Use a shorter timeout for individual navigation attempts if needed,
-		// but for now relying on the master context is safer to avoid complexity.
-		// However, Navigate() might block until load.
+	for i := 1; i <= maxRetries; i++ {
+		a.logger.Debug("Navigating to URL", zap.String("url", url), zap.Int("attempt", i), zap.Int("max_retries", maxRetries))
 		navErr = page.Navigate(url)
 		if navErr == nil {
-			a.logger.Debug("Navigation successful")
 			break
 		}
-		a.logger.Warn("Navigation failed",
-			zap.Error(navErr),
-			zap.String("retry_in", "2s"),
-		)
-		// Wait a bit before retrying, respecting context
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context cancelled during retry wait: %w", ctx.Err())
-		case <-time.After(2 * time.Second):
-		}
+		a.logger.Warn("Navigation failed", zap.Error(navErr), zap.Duration("retry_in", 2*time.Second))
+		time.Sleep(2 * time.Second)
 	}
 
-	if navErr != nil {
-		return nil, fmt.Errorf("failed to navigate to servientrega after %d attempts: %w", maxRetries, navErr)
-	}
-
-	a.logger.Debug("Waiting for API response (intercept)...")
+	// Wait for response
 	select {
-	case jsonOutput := <-done:
-		if strings.TrimSpace(jsonOutput) == "" {
-			return nil, fmt.Errorf("empty response from API")
+	case body := <-done:
+		a.logger.Debug("Received response from hijacked request")
+		var servResp servientregaResponse
+		err := json.Unmarshal([]byte(body), &servResp)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse Servientrega response: %w", err)
 		}
-		a.logger.Debug("API response received, parsing...")
-		return a.parseResponse([]byte(jsonOutput))
+
+		return a.mapResponseToDomain(servResp)
+
 	case <-ctx.Done():
-		return nil, fmt.Errorf("timeout waiting for API response: %w", ctx.Err())
+		if navErr != nil {
+			// Report navigation error as root cause
+			return nil, fmt.Errorf("navigation failed after retries: %w", navErr)
+		}
+		return nil, fmt.Errorf("timeout waiting for courier response: %w", ctx.Err())
 	}
 }
 
-func (a *ServientregaAdapter) parseResponse(body []byte) (*domain.TrackingHistory, error) {
-	var resp servientregaResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse servientrega response: %w", err)
+// mapResponseToDomain converts servientregaResponse to domain.TrackingHistory.
+func (a *ServientregaAdapter) mapResponseToDomain(resp servientregaResponse) (*domain.TrackingHistory, error) {
+	history := &domain.TrackingHistory{
+		GlobalStatus: domain.TrackingStatusProcessing, // Default
+		History:      make([]domain.TrackingEvent, 0),
 	}
 
+	// Check for valid response
 	if len(resp.Results) == 0 {
-		return nil, fmt.Errorf("no tracking results found")
+		return nil, fmt.Errorf("no results in response (Code: %d)", resp.Code)
 	}
 
 	result := resp.Results[0]
+	history.GlobalStatus = mapServientregaStatus(result.EstadoActual)
 
-	// Debug: log parsed data
-	a.logger.Debug("Parsed tracking data",
-		zap.String("numero_guia", result.NumeroGuia),
-		zap.String("estado_actual", result.EstadoActual),
-		zap.Int("movimientos_count", len(result.Movimientos)),
-	)
+	// Process movements (tracking events)
+	// Layout: "31/01/2026 12:51 " (DD/MM/YYYY HH:MM with trailing space)
+	const dateLayout = "02/01/2006 15:04"
 
-	// Map Global Status
-	status := domain.TrackingStatusProcessing
-	switch strings.ToUpper(result.EstadoActual) {
-	case "ENTREGADO":
-		status = domain.TrackingStatusCompleted
-	case "ENTREGADO A REMITENTE":
-		status = domain.TrackingStatusReturn // Using 'Return' as mapped in plan, though domain might have different const
-	case "EN PROCESAMIENTO":
-		status = domain.TrackingStatusProcessing
-	default:
-		// If unknown, default to Processing or specific unknown logic
-		status = domain.TrackingStatusProcessing
+	for _, mov := range result.Movimientos {
+		date, _ := time.Parse(dateLayout, strings.TrimSpace(mov.Fecha))
+
+		event := domain.TrackingEvent{
+			Date: date,
+			Text: mov.Movimiento,
+			City: mov.Ubicacion,
+			Code: mov.IdProceso,
+		}
+		history.History = append(history.History, event)
+
+		// Check if this code is known for analytics purposes
+		if !servKnownCodes[mov.IdProceso] {
+			a.logger.Warn("Unknown Servientrega movement code encountered",
+				zap.String("code", mov.IdProceso),
+				zap.String("description", mov.Movimiento),
+			)
+		}
 	}
 
-	// Map Events
-	var events []domain.TrackingEvent
-	for _, m := range result.Movimientos {
-		location := m.Ubicacion
-
-		// Combine Movimiento and Novedad for description
-		description := m.Movimiento
-		if m.Novedad != "" {
-			description = fmt.Sprintf("%s - %s", description, m.Novedad)
-		}
-
-		// Determine type (Mapping "Cerrado" to Checkpoint, otherwise maybe Info?)
-		// evtType := "INFO" // Not used in current domain event struct? Code is used.
-		// Domain definitions: Text, City, Code, Date.
-
-		// Parse Date
-		// Format example: "31/01/2026 12:51 " or "31/01/2026 12:51"
-		dateStr := strings.TrimSpace(m.Fecha)
-		parsedTime, err := time.Parse("02/01/2006 15:04", dateStr)
-		if err != nil {
-			// Fallback or log? For now, use zero time or current time?
-			// Let's use zero time but log to fmt if possible? No logger here yet.
-			parsedTime = time.Time{}
-		}
-
-		events = append(events, domain.TrackingEvent{
-			Date: parsedTime,
-			Text: description,
-			City: location,
-			Code: m.IdProceso,
-		})
-	}
-
-	return &domain.TrackingHistory{
-		GlobalStatus: status,
-		History:      events,
-	}, nil
+	return history, nil
 }
 
 // SupportsCourier returns true if this adapter supports servientrega_co.
 func (a *ServientregaAdapter) SupportsCourier(courierName string) bool {
-	return courierName == "servientrega_co"
+	return courierName == a.courierName
+}
+
+// --- Internal types ---
+
+// servientregaResponse represents the JSON structure from Servientrega API.
+type servientregaResponse struct {
+	ValidationNumber   int `json:"ValidationNumber"`
+	ValidationResponse int `json:"ValidationResponse"`
+	Code               int `json:"Code"`
+	Results            []struct {
+		NumeroGuia   string `json:"numeroGuia"`
+		FechaEnvio   string `json:"fechaEnvio"`
+		EstadoActual string `json:"estadoActual"`
+		Movimientos  []struct {
+			Estado     string `json:"estado"`
+			Fecha      string `json:"fecha"`
+			Movimiento string `json:"movimiento"`
+			Ubicacion  string `json:"ubicacion"`
+			Novedad    string `json:"Novedad"`
+			IdProceso  string `json:"IdProceso"`
+		} `json:"movimientos"`
+	} `json:"Results"`
+}
+
+// Known movement codes for Servientrega
+var servKnownCodes = map[string]bool{
+	"1":  true, // Guia generada
+	"6":  true, // Ingreso al centro logistico
+	"12": true, // Salio a ciudad destino
+	"15": true, // Llegó a ciudad destino
+	"18": true, // En reparto
+	"21": true, // Entregado
+	"24": true, // Devolución
+	"27": true, // Novedad
+}
+
+// mapServientregaStatus maps the estado string to our domain status.
+func mapServientregaStatus(estado string) domain.TrackingStatus {
+	estado = strings.ToUpper(strings.TrimSpace(estado))
+	switch {
+	case strings.Contains(estado, "ENTREGAD"):
+		return domain.TrackingStatusCompleted
+	case strings.Contains(estado, "DEVOL") || strings.Contains(estado, "RETURN"):
+		return domain.TrackingStatusReturn
+	case strings.Contains(estado, "NOVEDAD") || strings.Contains(estado, "INCIDENCIA"):
+		return domain.TrackingStatusIncidence
+	default:
+		return domain.TrackingStatusProcessing
+	}
 }
 
 // stealthUA mimics a real browser to avoid blocking
@@ -281,7 +296,7 @@ const stealthUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 func (a *ServientregaAdapter) checkConnectivity(ctx context.Context, urlStr string) error {
 	a.logger.Debug("Checking connectivity",
 		zap.String("url", urlStr),
-		zap.String("proxy", a.proxyURL),
+		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
@@ -306,13 +321,13 @@ func (a *ServientregaAdapter) checkConnectivity(ctx context.Context, urlStr stri
 	return nil
 }
 
-// getHTTPClient returns an HTTP client configured with proxy if proxyURL is set.
+// getHTTPClient returns an HTTP client configured with proxy if enabled.
 func (a *ServientregaAdapter) getHTTPClient() *http.Client {
-	if a.proxyURL == "" {
+	if !a.proxy.HasProxy() {
 		return http.DefaultClient
 	}
 
-	proxyURL, err := url.Parse(a.proxyURL)
+	proxyURL, err := url.Parse(a.proxy.FullURL())
 	if err != nil {
 		a.logger.Warn("Invalid proxy URL, using default client", zap.Error(err))
 		return http.DefaultClient
@@ -324,31 +339,4 @@ func (a *ServientregaAdapter) getHTTPClient() *http.Client {
 		},
 		Timeout: 30 * time.Second,
 	}
-}
-
-// parseProxyURL extracts host:port and credentials from the proxy URL.
-// Chromium's --proxy-server flag doesn't support embedded credentials,
-// so we need to separate them for use with browser.HandleAuth().
-// Returns (host:port, username, password).
-func (a *ServientregaAdapter) parseProxyURL() (host, username, password string) {
-	if a.proxyURL == "" {
-		return "", "", ""
-	}
-
-	parsed, err := url.Parse(a.proxyURL)
-	if err != nil {
-		a.logger.Warn("Failed to parse proxy URL", zap.Error(err))
-		return "", "", ""
-	}
-
-	// Build host:port (include scheme for Chromium)
-	host = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
-
-	// Extract credentials if present
-	if parsed.User != nil {
-		username = parsed.User.Username()
-		password, _ = parsed.User.Password()
-	}
-
-	return host, username, password
 }

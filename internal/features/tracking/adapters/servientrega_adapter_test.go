@@ -84,8 +84,8 @@ func TestServientregaAdapter_GetTrackingHistory(t *testing.T) {
 
 	// Initialize the adapter with the mock server URL
 	// Append /?Guia= to match the structure expected by the adapter
-	// Empty proxy URL for testing (no proxy needed)
-	adapter := NewServientregaAdapter(ts.URL+"/?Guia=", "")
+	// Empty proxy settings for testing (no proxy needed)
+	adapter := NewServientregaAdapter(ts.URL+"/?Guia=", ProxySettings{})
 
 	// Call the method
 	history, err := adapter.GetTrackingHistory("2259200365")

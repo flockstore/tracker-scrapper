@@ -30,6 +30,9 @@ type AppConfig struct {
 	// Couriers holds the courier tracking URL configuration.
 	Couriers CourierConfig `mapstructure:",squash"`
 
+	// Proxy holds the shared proxy configuration.
+	Proxy ProxyConfig `mapstructure:",squash"`
+
 	// Cache holds the Redis cache configuration.
 	Cache CacheConfig `mapstructure:",squash"`
 }
@@ -52,20 +55,32 @@ type DatabaseConfig struct {
 	Port int `mapstructure:"DB_PORT" default:"5432"`
 }
 
-// CourierConfig holds courier tracking API URLs and optional proxy configuration.
+// CourierConfig holds courier tracking API URLs.
 type CourierConfig struct {
 	// CoordinadoraURL is the Coordinadora tracking API base URL.
 	CoordinadoraURL string `mapstructure:"COURIER_COORDINADORA_CO" required:"true"`
-	// CoordinadoraProxyURL is the optional HTTP proxy for Coordinadora requests.
-	CoordinadoraProxyURL string `mapstructure:"COURIER_COORDINADORA_PROXY"`
 	// ServientregaURL is the Servientrega tracking API base URL.
 	ServientregaURL string `mapstructure:"COURIER_SERVIENTREGA_CO" required:"true"`
-	// ServientregaProxyURL is the optional HTTP proxy for Servientrega requests.
-	ServientregaProxyURL string `mapstructure:"COURIER_SERVIENTREGA_PROXY"`
 	// InterrapidisimoURL is the Interrapidisimo tracking API base URL.
 	InterrapidisimoURL string `mapstructure:"COURIER_INTERRAPIDISIMO_CO" required:"true"`
-	// InterrapidisimoProxyURL is the optional HTTP proxy for Interrapidisimo requests.
-	InterrapidisimoProxyURL string `mapstructure:"COURIER_INTERRAPIDISIMO_PROXY"`
+}
+
+// ProxyConfig holds shared proxy configuration with per-courier enable flags.
+type ProxyConfig struct {
+	// Hostname is the proxy server hostname (e.g., geo.iproyal.com).
+	Hostname string `mapstructure:"PROXY_HOSTNAME"`
+	// Port is the proxy server port (e.g., 12321).
+	Port int `mapstructure:"PROXY_PORT"`
+	// Username is the proxy authentication username.
+	Username string `mapstructure:"PROXY_USERNAME"`
+	// Password is the proxy authentication password.
+	Password string `mapstructure:"PROXY_PASSWORD"`
+	// Coordinadora enables proxy for Coordinadora requests.
+	Coordinadora bool `mapstructure:"PROXY_COORDINADORA" default:"false"`
+	// Servientrega enables proxy for Servientrega requests.
+	Servientrega bool `mapstructure:"PROXY_SERVIENTREGA" default:"false"`
+	// Interrapidisimo enables proxy for Interrapidisimo requests.
+	Interrapidisimo bool `mapstructure:"PROXY_INTERRAPIDISIMO" default:"false"`
 }
 
 // CacheConfig holds Redis cache configuration.
