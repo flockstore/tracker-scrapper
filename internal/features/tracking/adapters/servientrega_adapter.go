@@ -9,6 +9,7 @@ import (
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 )
 
 // ServientregaAdapter handles tracking for Servientrega courier.
@@ -46,7 +47,13 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	// Use exact same pattern as working standalone scraper
 	url := fmt.Sprintf("https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=%s", trackingNumber)
 
-	browser := rod.New().MustConnect()
+	// Configure launcher for Docker environment (needs --no-sandbox)
+	u := launcher.New().
+		Headless(true).
+		NoSandbox(true).
+		MustLaunch()
+
+	browser := rod.New().ControlURL(u).MustConnect()
 	defer browser.MustClose()
 
 	page := browser.MustPage("")
@@ -65,7 +72,21 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 
 	go router.Run()
 
-	page.MustNavigate(url)
+	// Retry logic for navigation to handle timeouts
+	maxRetries := 3
+	var navErr error
+	for i := 0; i < maxRetries; i++ {
+		navErr = page.Navigate(url)
+		if navErr == nil {
+			break
+		}
+		// Wait a bit before retrying
+		time.Sleep(2 * time.Second)
+	}
+
+	if navErr != nil {
+		return nil, fmt.Errorf("failed to navigate to servientrega after %d attempts: %w", maxRetries, navErr)
+	}
 
 	jsonOutput := <-done
 
