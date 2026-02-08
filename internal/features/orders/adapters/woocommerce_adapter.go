@@ -68,7 +68,7 @@ func (a *WooCommerceAdapter) GetOrder(orderID string) (*domain.Order, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return a.mapToDomain(wcOrder), nil
+	return a.mapToDomain(wcOrder, orderID), nil
 }
 
 // HealthCheck verifies that the WooCommerce API is reachable and credentials are valid.
@@ -100,8 +100,8 @@ func (a *WooCommerceAdapter) HealthCheck() error {
 }
 
 // mapToDomain converts a raw WooCommerce order response into a domain Order entity.
-func (a *WooCommerceAdapter) mapToDomain(wcOrder woocommerceOrder) *domain.Order {
-	tracking := extractTrackingInfo(wcOrder)
+func (a *WooCommerceAdapter) mapToDomain(wcOrder woocommerceOrder, orderID string) *domain.Order {
+	tracking := a.extractTrackingInfo(wcOrder, orderID)
 	status := mapStatus(wcOrder.Status, tracking)
 
 	return &domain.Order{
@@ -141,7 +141,7 @@ func mapStatus(status string, tracking []domain.TrackingInfo) domain.OrderStatus
 }
 
 // extractTrackingInfo attempts to find tracking information from order metadata.
-func extractTrackingInfo(order woocommerceOrder) []domain.TrackingInfo {
+func (a *WooCommerceAdapter) extractTrackingInfo(order woocommerceOrder, orderID string) []domain.TrackingInfo {
 	var tracking []domain.TrackingInfo
 
 	for _, shippingLine := range order.ShippingLines {
@@ -201,9 +201,9 @@ func extractTrackingInfo(order woocommerceOrder) []domain.TrackingInfo {
 		})
 	}
 
-	// Final fallback: parse customer notes
-	if len(tracking) == 0 && order.CustomerNote != "" {
-		tracking = extractTrackingFromNotes(order.CustomerNote)
+	// Final fallback: fetch and parse order notes
+	if len(tracking) == 0 {
+		tracking = a.getTrackingFromNotes(orderID)
 	}
 
 	return tracking
@@ -230,6 +230,52 @@ func parseTrackingItems(value interface{}) ([]domain.TrackingInfo, error) {
 	}
 
 	return tracking, nil
+}
+
+// getTrackingFromNotes fetches order notes from WooCommerce API and extracts tracking information.
+func (a *WooCommerceAdapter) getTrackingFromNotes(orderID string) []domain.TrackingInfo {
+	url := fmt.Sprintf("%s/wp-json/wc/v3/orders/%s/notes", a.config.URL, orderID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Get().Warn("Failed to create notes request", zap.String("order_id", orderID), zap.Error(err))
+		return nil
+	}
+
+	// Basic Auth
+	authVal := make([]byte, 0, len(a.config.ConsumerKey)+len(a.config.ConsumerSecret)+1)
+	authVal = fmt.Appendf(authVal, "%s:%s", a.config.ConsumerKey, a.config.ConsumerSecret)
+	encoded := base64.StdEncoding.EncodeToString(authVal)
+	req.Header.Add("Authorization", "Basic "+encoded)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		logger.Get().Warn("Failed to fetch order notes", zap.String("order_id", orderID), zap.Error(err))
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logger.Get().Warn("Order notes request failed", zap.String("order_id", orderID), zap.Int("status", resp.StatusCode))
+		return nil
+	}
+
+	var notes []wcOrderNote
+	if err := json.NewDecoder(resp.Body).Decode(&notes); err != nil {
+		logger.Get().Warn("Failed to decode order notes", zap.String("order_id", orderID), zap.Error(err))
+		return nil
+	}
+
+	// Search for tracking info in customer notes
+	for _, note := range notes {
+		if note.CustomerNote && note.Note != "" {
+			if tracking := extractTrackingFromNotes(note.Note); len(tracking) > 0 {
+				return tracking
+			}
+		}
+	}
+
+	return nil
 }
 
 // extractTrackingFromNotes parses customer notes to extract tracking information.
@@ -340,8 +386,6 @@ type woocommerceOrder struct {
 	ShippingLines []wcShippingLine `json:"shipping_lines"`
 	// MetaData contains extra fields.
 	MetaData []wcMetaData `json:"meta_data"`
-	// CustomerNote contains customer-provided notes that may include tracking info.
-	CustomerNote string `json:"customer_note"`
 }
 
 // wcMetaData represents a key-value pair in WooCommerce metadata.
@@ -350,6 +394,20 @@ type wcMetaData struct {
 	Key string `json:"key"`
 	// Value is the metadata value, which can be of various types.
 	Value interface{} `json:"value"`
+}
+
+// wcOrderNote represents a note from the WooCommerce order notes endpoint.
+type wcOrderNote struct {
+	// ID is the unique note ID.
+	ID int `json:"id"`
+	// Author is the note author.
+	Author string `json:"author"`
+	// Note is the note content.
+	Note string `json:"note"`
+	// CustomerNote indicates if this note is visible to customers.
+	CustomerNote bool `json:"customer_note"`
+	// DateCreated is when the note was created.
+	DateCreated string `json:"date_created"`
 }
 
 // wcTrackingItem represents a single tracking entry from WooCommerce Shipment Tracking plugin.

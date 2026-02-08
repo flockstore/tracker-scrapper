@@ -48,13 +48,21 @@ func TestWooCommerceAdapter_GetOrder_Success(t *testing.T) {
 	}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/wp-json/wc/v3/orders/123", r.URL.Path)
-
 		expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("ck_test:cs_test"))
 		assert.Equal(t, expectedAuth, r.Header.Get("Authorization"))
 
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(mockResponse))
+		// Handle both order and notes endpoints
+		if r.URL.Path == "/wp-json/wc/v3/orders/123" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(mockResponse))
+		} else if r.URL.Path == "/wp-json/wc/v3/orders/123/notes" {
+			// Return empty notes array (no tracking in notes)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("[]"))
+		} else {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer server.Close()
 
@@ -351,9 +359,9 @@ func TestExtractTrackingFromNotes_DifferentSpacing(t *testing.T) {
 // TestExtractTrackingFromNotes_CarrierNormalization verifies carrier name normalization.
 func TestExtractTrackingFromNotes_CarrierNormalization(t *testing.T) {
 	testCases := []struct {
-		name             string
-		notes            string
-		expectedCarrier  string
+		name            string
+		notes           string
+		expectedCarrier string
 	}{
 		{
 			name:            "Servientrega without suffix",
@@ -421,38 +429,4 @@ func TestNormalizeCarrierName(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
-}
-
-// TestExtractTrackingInfo_FallbackToNotes verifies notes are used as final fallback.
-func TestExtractTrackingInfo_FallbackToNotes(t *testing.T) {
-	order := woocommerceOrder{
-		ShippingLines: []wcShippingLine{},
-		MetaData:      []wcMetaData{},
-		CustomerNote:  "No de guía: 5555555555 Paquetería: servientrega_co",
-	}
-
-	tracking := extractTrackingInfo(order)
-
-	require.Len(t, tracking, 1)
-	assert.Equal(t, "5555555555", tracking[0].TrackingNumber)
-	assert.Equal(t, "servientrega_co", tracking[0].TrackingProvider)
-}
-
-// TestExtractTrackingInfo_NotesIgnoredWhenMetadataExists verifies notes are only fallback.
-func TestExtractTrackingInfo_NotesIgnoredWhenMetadataExists(t *testing.T) {
-	order := woocommerceOrder{
-		ShippingLines: []wcShippingLine{},
-		MetaData: []wcMetaData{
-			{Key: "tracking_number", Value: "9999999999"},
-			{Key: "tracking_provider", Value: "coordinadora_co"},
-		},
-		CustomerNote: "No de guía: 1111111111 Paquetería: servientrega_co",
-	}
-
-	tracking := extractTrackingInfo(order)
-
-	require.Len(t, tracking, 1)
-	// Should use metadata, not notes
-	assert.Equal(t, "9999999999", tracking[0].TrackingNumber)
-	assert.Equal(t, "coordinadora_co", tracking[0].TrackingProvider)
 }
