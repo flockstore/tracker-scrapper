@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.vscode
+
+.env
+.env.*
+
+api
+coverage.out
+debug_output.json
