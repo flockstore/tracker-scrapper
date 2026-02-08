@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -46,11 +47,21 @@ type servientregaResponse struct {
 // GetTrackingHistory retrieves tracking history from Servientrega.
 // GetTrackingHistory retrieves tracking history from Servientrega.
 func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
+	// Create a master context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	fmt.Printf("DEBUG: Starting Servientrega tracking for %s with 60s timeout\n", trackingNumber)
+
 	// Use baseURL from config (mockable)
 	url := fmt.Sprintf("%s%s", a.baseURL, trackingNumber)
 
+	fmt.Println("DEBUG: Launching browser...")
 	// Configure launcher for Docker environment (needs --no-sandbox)
+	// Use Context(ctx) to ensure launch respects timeout
 	u, err := launcher.New().
+		Context(ctx).
+		Bin("/usr/bin/chromium").
 		Headless(true).
 		NoSandbox(true).
 		Launch()
@@ -58,35 +69,38 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("failed to launch browser: %w", err)
 	}
 
-	browser := rod.New().ControlURL(u)
+	fmt.Println("DEBUG: Connecting to browser...")
+	browser := rod.New().Context(ctx).ControlURL(u)
 	if err := browser.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to browser: %w", err)
 	}
 	defer browser.Close()
 
+	fmt.Println("DEBUG: Creating page...")
 	// Page expects proto.TargetCreateTarget in this version of rod
 	page, err := browser.Page(proto.TargetCreateTarget{URL: ""})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create page: %w", err)
 	}
+	// Measure page operations with the same context
+	page = page.Context(ctx)
 
+	fmt.Println("DEBUG: Hijacking requests...")
 	router := page.HijackRequests()
 	defer router.Stop()
 
 	done := make(chan string)
 
 	// Add expects (pattern string, type proto.NetworkResourceType, handler)
-	// NetworkResourceTypeUndefined is likely what we want if we don't care, but let's check if it exists in this version.
-	// If undefined is not found, we can try leaving it out if the signature allows, but the error said it wants it.
-	// Let's try proto.NetworkResourceTypeScripts as a fallback or just empty if it's an enum.
-	// Error was: undefined: proto.NetworkResourceTypeUndefined.
-	// In v0.116.2 it might be proto.NetworkResourceType("")? Or valid types are e.g. proto.NetworkResourceTypeXHR.
-	// Since we are hijacking "*/api/ControlRastreovalidaciones", it's likely an XHR/Fetch.
 	if err := router.Add("*/api/ControlRastreovalidaciones", proto.NetworkResourceTypeXHR, func(ctx *rod.Hijack) {
+		fmt.Println("DEBUG: Intercepted ControlRastreovalidaciones request")
 		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
+			fmt.Printf("DEBUG: Failed to load response: %v\n", err)
 			return
 		}
-		done <- string(ctx.Response.Body())
+		body := string(ctx.Response.Body())
+		fmt.Printf("DEBUG: Received response body length: %d\n", len(body))
+		done <- body
 	}); err != nil {
 		return nil, fmt.Errorf("failed to add router handler: %w", err)
 	}
@@ -97,26 +111,39 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	maxRetries := 3
 	var navErr error
 	for i := 0; i < maxRetries; i++ {
+		fmt.Printf("DEBUG: Navigating to %s (attempt %d/%d)...\n", url, i+1, maxRetries)
+
+		// Use a shorter timeout for individual navigation attempts if needed,
+		// but for now relying on the master context is safer to avoid complexity.
+		// However, Navigate() might block until load.
 		navErr = page.Navigate(url)
 		if navErr == nil {
+			fmt.Println("DEBUG: Navigation successful")
 			break
 		}
-		// Wait a bit before retrying
-		time.Sleep(2 * time.Second)
+		fmt.Printf("DEBUG: Navigation failed: %v. Retrying in 2s...\n", navErr)
+		// Wait a bit before retrying, respecting context
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled during retry wait: %w", ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
 	}
 
 	if navErr != nil {
 		return nil, fmt.Errorf("failed to navigate to servientrega after %d attempts: %w", maxRetries, navErr)
 	}
 
+	fmt.Println("DEBUG: Waiting for API response (intercept)...")
 	select {
 	case jsonOutput := <-done:
 		if strings.TrimSpace(jsonOutput) == "" {
 			return nil, fmt.Errorf("empty response from API")
 		}
+		fmt.Println("DEBUG: API response received, parsing...")
 		return a.parseResponse([]byte(jsonOutput))
-	case <-time.After(30 * time.Second):
-		return nil, fmt.Errorf("timeout waiting for API response")
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout waiting for API response: %w", ctx.Err())
 	}
 }
 
