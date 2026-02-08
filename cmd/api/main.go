@@ -17,6 +17,10 @@ import (
 	"tracker-scrapper/internal/features/tracking/ports"
 	trackingservice "tracker-scrapper/internal/features/tracking/service"
 
+	banneradapter "tracker-scrapper/internal/features/banners/adapters"
+	bannerhandler "tracker-scrapper/internal/features/banners/handler"
+	bannerservice "tracker-scrapper/internal/features/banners/service"
+
 	"go.uber.org/zap"
 )
 
@@ -87,11 +91,21 @@ func main() {
 	trackingSvc := trackingservice.NewTrackingService(trackingProviders, redisCache, trackingCacheTTL)
 	trackingHdl := trackinghandler.NewTrackingHandler(trackingSvc)
 
+	// Initialize Banner Feature
+	bannerRepo := banneradapter.NewRedisBannerRepository(redisCache)
+	bannerSvc := bannerservice.NewBannerService(bannerRepo)
+	bannerHdl := bannerhandler.NewBannerHandler(bannerSvc)
+
 	srv := server.New(cfg)
 
 	// Register Routes
 	srv.App.Get("/orders/:id", orderHandler.GetOrder)
 	srv.App.Get("/tracking/:number", trackingHdl.GetTrackingHistory)
+
+	// Banner Routes
+	srv.App.Post("/banner", bannerHdl.SetBanner)
+	srv.App.Get("/banner", bannerHdl.GetBanner)
+	srv.App.Delete("/banner", bannerHdl.RemoveBanner)
 
 	if err := srv.Run(); err != nil {
 		l.Fatal("Server failed to start", zap.Error(err))
