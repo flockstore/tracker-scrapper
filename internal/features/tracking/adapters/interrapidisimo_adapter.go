@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -68,8 +69,12 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// Parse proxy URL to extract host:port and credentials separately
+	proxyHost, proxyUser, proxyPass := a.parseProxyURL()
+
 	a.logger.Debug("Launching browser...",
-		zap.String("proxy", a.proxyURL),
+		zap.String("proxy_host", proxyHost),
+		zap.Bool("has_auth", proxyUser != ""),
 	)
 
 	// Configure launcher
@@ -78,9 +83,9 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 		Headless(true).
 		NoSandbox(true)
 
-	// Configure proxy if provided
-	if a.proxyURL != "" {
-		l = l.Proxy(a.proxyURL)
+	// Configure proxy if provided (use only host:port, not credentials)
+	if proxyHost != "" {
+		l = l.Proxy(proxyHost)
 		a.logger.Debug("Browser configured with proxy")
 	}
 
@@ -94,6 +99,12 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 		return nil, fmt.Errorf("failed to connect to browser: %w", err)
 	}
 	defer browser.Close()
+
+	// Handle proxy authentication if credentials were provided
+	if proxyUser != "" && proxyPass != "" {
+		go browser.MustHandleAuth(proxyUser, proxyPass)()
+		a.logger.Debug("Proxy authentication configured")
+	}
 
 	// Open the page
 	page := browser.MustPage(a.baseURL)
@@ -190,4 +201,26 @@ func (a *InterrapidisimoAdapter) mapResponseToDomain(resp interResponse) (*domai
 // SupportsCourier returns true if this adapter supports interrapidisimo_co.
 func (a *InterrapidisimoAdapter) SupportsCourier(courierName string) bool {
 	return courierName == "interrapidisimo_co"
+}
+
+// parseProxyURL extracts host:port and credentials from the proxy URL.
+func (a *InterrapidisimoAdapter) parseProxyURL() (host, username, password string) {
+	if a.proxyURL == "" {
+		return "", "", ""
+	}
+
+	parsed, err := url.Parse(a.proxyURL)
+	if err != nil {
+		a.logger.Warn("Failed to parse proxy URL", zap.Error(err))
+		return "", "", ""
+	}
+
+	host = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+
+	if parsed.User != nil {
+		username = parsed.User.Username()
+		password, _ = parsed.User.Password()
+	}
+
+	return host, username, password
 }

@@ -73,8 +73,13 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
+	// Parse proxy URL to extract host:port and credentials separately
+	// Chromium's --proxy-server flag doesn't support embedded credentials
+	proxyHost, proxyUser, proxyPass := a.parseProxyURL()
+
 	a.logger.Debug("Launching browser...",
-		zap.String("proxy", a.proxyURL),
+		zap.String("proxy_host", proxyHost),
+		zap.Bool("has_auth", proxyUser != ""),
 	)
 	// Configure launcher for Docker environment (needs --no-sandbox)
 	// Use Context(ctx) to ensure launch respects timeout
@@ -85,9 +90,9 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		NoSandbox(true).
 		Set("user-agent", stealthUA) // Set User-Agent in browser
 
-	// Configure proxy if provided
-	if a.proxyURL != "" {
-		l = l.Proxy(a.proxyURL)
+	// Configure proxy if provided (use only host:port, not credentials)
+	if proxyHost != "" {
+		l = l.Proxy(proxyHost)
 		a.logger.Debug("Browser configured with proxy")
 	}
 
@@ -111,6 +116,12 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	}
 	// Measure page operations with the same context
 	page = page.Context(ctx)
+
+	// Handle proxy authentication if credentials were provided
+	if proxyUser != "" && proxyPass != "" {
+		go browser.MustHandleAuth(proxyUser, proxyPass)()
+		a.logger.Debug("Proxy authentication configured")
+	}
 
 	// Stealth: Hide webdriver property
 	if _, err := page.EvalOnNewDocument("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"); err != nil {
@@ -313,4 +324,31 @@ func (a *ServientregaAdapter) getHTTPClient() *http.Client {
 		},
 		Timeout: 30 * time.Second,
 	}
+}
+
+// parseProxyURL extracts host:port and credentials from the proxy URL.
+// Chromium's --proxy-server flag doesn't support embedded credentials,
+// so we need to separate them for use with browser.HandleAuth().
+// Returns (host:port, username, password).
+func (a *ServientregaAdapter) parseProxyURL() (host, username, password string) {
+	if a.proxyURL == "" {
+		return "", "", ""
+	}
+
+	parsed, err := url.Parse(a.proxyURL)
+	if err != nil {
+		a.logger.Warn("Failed to parse proxy URL", zap.Error(err))
+		return "", "", ""
+	}
+
+	// Build host:port (include scheme for Chromium)
+	host = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+
+	// Extract credentials if present
+	if parsed.User != nil {
+		username = parsed.User.Username()
+		password, _ = parsed.User.Password()
+	}
+
+	return host, username, password
 }
