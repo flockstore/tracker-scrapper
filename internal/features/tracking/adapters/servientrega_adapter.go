@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // ServientregaAdapter handles tracking for Servientrega courier.
@@ -43,32 +44,45 @@ type servientregaResponse struct {
 }
 
 // GetTrackingHistory retrieves tracking history from Servientrega.
+// GetTrackingHistory retrieves tracking history from Servientrega.
 func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
 	// Use exact same pattern as working standalone scraper
 	url := fmt.Sprintf("https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=%s", trackingNumber)
 
 	// Configure launcher for Docker environment (needs --no-sandbox)
-	u := launcher.New().
+	u, err := launcher.New().
 		Headless(true).
 		NoSandbox(true).
-		MustLaunch()
+		Launch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	}
 
-	browser := rod.New().ControlURL(u).MustConnect()
-	defer browser.MustClose()
+	browser := rod.New().ControlURL(u)
+	if err := browser.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to browser: %w", err)
+	}
+	defer browser.Close()
 
-	page := browser.MustPage("")
+	page, err := browser.Page("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create page: %w", err)
+	}
 
 	router := page.HijackRequests()
-	defer router.MustStop()
+	defer router.Stop()
 
 	done := make(chan string)
 
-	router.MustAdd("*/api/ControlRastreovalidaciones", func(ctx *rod.Hijack) {
+	// Use Add instead of MustAdd to avoid panic
+	if err := router.Add("*/api/ControlRastreovalidaciones", proto.NetworkResourceTypeUndefined, func(ctx *rod.Hijack) {
 		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
 			return
 		}
 		done <- string(ctx.Response.Body())
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("failed to add router handler: %w", err)
+	}
 
 	go router.Run()
 
@@ -88,13 +102,15 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("failed to navigate to servientrega after %d attempts: %w", maxRetries, navErr)
 	}
 
-	jsonOutput := <-done
-
-	if strings.TrimSpace(jsonOutput) == "" {
-		return nil, fmt.Errorf("empty response from API")
+	select {
+	case jsonOutput := <-done:
+		if strings.TrimSpace(jsonOutput) == "" {
+			return nil, fmt.Errorf("empty response from API")
+		}
+		return a.parseResponse([]byte(jsonOutput))
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for API response")
 	}
-
-	return a.parseResponse([]byte(jsonOutput))
 }
 
 func (a *ServientregaAdapter) parseResponse(body []byte) (*domain.TrackingHistory, error) {
