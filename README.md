@@ -85,11 +85,73 @@ COURIER_COORDINADORA_CO=https://coordinadora.com/rastreo/rastreo-de-guia/detalle
 COURIER_SERVIENTREGA_CO=https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=
 COURIER_INTERRAPIDISIMO_CO=https://www3.interrapidisimo.com/SiguetuEnvio/shipment
 
+# Proxy Configuration (Optional - for non-Colombian servers)
+# COURIER_COORDINADORA_PROXY=http://user:pass@proxy:port
+# COURIER_SERVIENTREGA_PROXY=http://user:pass@proxy:port
+# COURIER_INTERRAPIDISIMO_PROXY=http://user:pass@proxy:port
+
 # Redis Cache Configuration (REQUIRED)
 CACHE_REDIS_URL=redis://localhost:6379
 CACHE_ORDER_TTL=3600          # Order cache TTL in seconds (1 hour)
 CACHE_TRACKING_TTL=1800       # Tracking cache TTL in seconds (30 minutes)
 ```
+
+## 🌐 Proxy Configuration (Non-Colombian Servers)
+
+When deploying outside Colombia (AWS, DigitalOcean, VPS, etc.), Colombian courier websites may block datacenter IP addresses. You'll need a **residential proxy** to access their tracking APIs.
+
+### When Proxies Are Needed
+
+- ✅ **Local development in Colombia**: No proxy needed
+- ✅ **Docker/Server in Colombia**: Usually no proxy needed  
+- ❌ **AWS, GCP, Azure, VPS outside Colombia**: Proxy required for some couriers
+- ❌ **Servientrega specifically**: Often blocks non-Colombian IPs
+
+### Symptoms of IP Blocking
+
+```
+dial tcp 190.145.160.56:443: i/o timeout
+```
+
+If you see timeout errors like this while other couriers work fine, you need a proxy.
+
+### Recommended Proxy Providers
+
+| Provider | Type | Cost | Notes |
+|----------|------|------|-------|
+| **IPRoyal** | Residential | ~$7/GB | Pay-as-you-go, Colombia IPs available |
+| **Webshare** | Datacenter | $5.49/mo | Cheaper but may not work |
+| **ProxyScrape** | Free | Free | Unreliable, for testing only |
+
+**Cost estimate**: ~$12 USD for 2GB, which lasts for approximately 40,000 requests.
+
+### Testing Your Proxy
+
+Before configuring, **always test with curl** to verify the proxy works:
+
+```bash
+# Test proxy connectivity to Servientrega
+curl -x http://user:pass@proxy:port --connect-timeout 15 -I \
+  "https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=2259200012"
+
+# Expected: HTTP/1.1 200 OK
+```
+
+### Configuration
+
+Set the proxy URL in your `.env` file:
+
+```env
+# IPRoyal example with Colombia geo-targeting
+COURIER_SERVIENTREGA_PROXY=http://user-country-co:password@geo.iproyal.com:12321
+
+# Standard HTTP proxy example
+COURIER_COORDINADORA_PROXY=http://username:password@proxy-host:port
+```
+
+> **⚠️ Important**: Use your own proxy and test with curl commands first. Take advantage of free trials from proxy providers before making any payment.
+
+
 
 ### Installation & Running
 

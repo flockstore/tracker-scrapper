@@ -52,14 +52,20 @@ type DatabaseConfig struct {
 	Port int `mapstructure:"DB_PORT" default:"5432"`
 }
 
-// CourierConfig holds courier tracking API URLs.
+// CourierConfig holds courier tracking API URLs and optional proxy configuration.
 type CourierConfig struct {
 	// CoordinadoraURL is the Coordinadora tracking API base URL.
 	CoordinadoraURL string `mapstructure:"COURIER_COORDINADORA_CO" required:"true"`
+	// CoordinadoraProxyURL is the optional HTTP proxy for Coordinadora requests.
+	CoordinadoraProxyURL string `mapstructure:"COURIER_COORDINADORA_PROXY"`
 	// ServientregaURL is the Servientrega tracking API base URL.
 	ServientregaURL string `mapstructure:"COURIER_SERVIENTREGA_CO" required:"true"`
+	// ServientregaProxyURL is the optional HTTP proxy for Servientrega requests.
+	ServientregaProxyURL string `mapstructure:"COURIER_SERVIENTREGA_PROXY"`
 	// InterrapidisimoURL is the Interrapidisimo tracking API base URL.
 	InterrapidisimoURL string `mapstructure:"COURIER_INTERRAPIDISIMO_CO" required:"true"`
+	// InterrapidisimoProxyURL is the optional HTTP proxy for Interrapidisimo requests.
+	InterrapidisimoProxyURL string `mapstructure:"COURIER_INTERRAPIDISIMO_PROXY"`
 }
 
 // CacheConfig holds Redis cache configuration.

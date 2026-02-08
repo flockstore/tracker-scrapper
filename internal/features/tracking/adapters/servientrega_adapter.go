@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,15 +20,18 @@ import (
 
 // ServientregaAdapter handles tracking for Servientrega courier.
 type ServientregaAdapter struct {
-	baseURL string
-	logger  *zap.Logger
+	baseURL  string
+	proxyURL string
+	logger   *zap.Logger
 }
 
-// NewServientregaAdapter creates a new ServientregaAdapter with the given base URL.
-func NewServientregaAdapter(baseURL string) *ServientregaAdapter {
+// NewServientregaAdapter creates a new ServientregaAdapter with the given base URL and optional proxy URL.
+// If proxyURL is empty, no proxy will be used.
+func NewServientregaAdapter(baseURL, proxyURL string) *ServientregaAdapter {
 	return &ServientregaAdapter{
-		baseURL: baseURL,
-		logger:  logger.Get(),
+		baseURL:  baseURL,
+		proxyURL: proxyURL,
+		logger:   logger.Get(),
 	}
 }
 
@@ -69,16 +73,25 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
-	a.logger.Debug("Launching browser...")
+	a.logger.Debug("Launching browser...",
+		zap.String("proxy", a.proxyURL),
+	)
 	// Configure launcher for Docker environment (needs --no-sandbox)
 	// Use Context(ctx) to ensure launch respects timeout
-	u, err := launcher.New().
+	l := launcher.New().
 		Context(ctx).
 		Bin("/usr/bin/chromium").
 		Headless(true).
 		NoSandbox(true).
-		Set("user-agent", stealthUA). // Set User-Agent in browser
-		Launch()
+		Set("user-agent", stealthUA) // Set User-Agent in browser
+
+	// Configure proxy if provided
+	if a.proxyURL != "" {
+		l = l.Proxy(a.proxyURL)
+		a.logger.Debug("Browser configured with proxy")
+	}
+
+	u, err := l.Launch()
 	if err != nil {
 		return nil, fmt.Errorf("failed to launch browser: %w", err)
 	}
@@ -255,7 +268,10 @@ const stealthUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 
 // checkConnectivity performs a simple HTTP request to verify network reachability
 func (a *ServientregaAdapter) checkConnectivity(ctx context.Context, urlStr string) error {
-	a.logger.Debug("Checking connectivity", zap.String("url", urlStr))
+	a.logger.Debug("Checking connectivity",
+		zap.String("url", urlStr),
+		zap.String("proxy", a.proxyURL),
+	)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
@@ -265,11 +281,10 @@ func (a *ServientregaAdapter) checkConnectivity(ctx context.Context, urlStr stri
 	// Set stealth User-Agent
 	req.Header.Set("User-Agent", stealthUA)
 
-	// Use a shorter timeout for this check (e.g. 10s) derived from the master context
-	// But since req uses ctx, it respects the 60s total.
-	// Let's rely on standard client.
+	// Create HTTP client with optional proxy
+	client := a.getHTTPClient()
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		a.logger.Debug("Connectivity check FAILED", zap.Error(err))
 		return err
@@ -278,4 +293,24 @@ func (a *ServientregaAdapter) checkConnectivity(ctx context.Context, urlStr stri
 
 	a.logger.Debug("Connectivity check SUCCESS", zap.String("status", resp.Status))
 	return nil
+}
+
+// getHTTPClient returns an HTTP client configured with proxy if proxyURL is set.
+func (a *ServientregaAdapter) getHTTPClient() *http.Client {
+	if a.proxyURL == "" {
+		return http.DefaultClient
+	}
+
+	proxyURL, err := url.Parse(a.proxyURL)
+	if err != nil {
+		a.logger.Warn("Invalid proxy URL, using default client", zap.Error(err))
+		return http.DefaultClient
+	}
+
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+		Timeout: 30 * time.Second,
+	}
 }

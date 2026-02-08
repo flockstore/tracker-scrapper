@@ -76,9 +76,18 @@ func main() {
 	orderHandler := orderhandler.NewOrderHandler(orderService)
 
 	// Initialize Tracking Providers
-	coordinadoraAdapter := trackingadapter.NewCoordinadoraAdapter(cfg.Couriers.CoordinadoraURL)
-	servientregaAdapter := trackingadapter.NewServientregaAdapter(cfg.Couriers.ServientregaURL)
-	interrapidisimoAdapter := trackingadapter.NewInterrapidisimoAdapter(cfg.Couriers.InterrapidisimoURL)
+	coordinadoraAdapter := trackingadapter.NewCoordinadoraAdapter(
+		cfg.Couriers.CoordinadoraURL,
+		cfg.Couriers.CoordinadoraProxyURL,
+	)
+	servientregaAdapter := trackingadapter.NewServientregaAdapter(
+		cfg.Couriers.ServientregaURL,
+		cfg.Couriers.ServientregaProxyURL,
+	)
+	interrapidisimoAdapter := trackingadapter.NewInterrapidisimoAdapter(
+		cfg.Couriers.InterrapidisimoURL,
+		cfg.Couriers.InterrapidisimoProxyURL,
+	)
 
 	trackingProviders := []ports.TrackingProvider{
 		coordinadoraAdapter,

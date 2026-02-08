@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,13 +12,15 @@ import (
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 	"go.uber.org/zap"
 )
 
 // CoordinadoraAdapter handles tracking for Coordinadora courier via scraping.
 type CoordinadoraAdapter struct {
-	baseURL string
-	logger  *zap.Logger
+	baseURL  string
+	proxyURL string
+	logger   *zap.Logger
 }
 
 var coordKnownCodes = map[string]bool{
@@ -38,11 +41,13 @@ var coordKnownCodes = map[string]bool{
 	"post_binded": true, // Nueva guia generada
 }
 
-// NewCoordinadoraAdapter creates a new CoordinadoraAdapter with the given base URL.
-func NewCoordinadoraAdapter(baseURL string) *CoordinadoraAdapter {
+// NewCoordinadoraAdapter creates a new CoordinadoraAdapter with the given base URL and optional proxy URL.
+// If proxyURL is empty, no proxy will be used.
+func NewCoordinadoraAdapter(baseURL, proxyURL string) *CoordinadoraAdapter {
 	return &CoordinadoraAdapter{
-		baseURL: baseURL,
-		logger:  logger.Get(),
+		baseURL:  baseURL,
+		proxyURL: proxyURL,
+		logger:   logger.Get(),
 	}
 }
 
@@ -58,6 +63,9 @@ type coordinadoraResponse struct {
 
 // GetTrackingHistory retrieves tracking history from Coordinadora using browser automation.
 func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
+	// Create a master context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
 	url := fmt.Sprintf(a.baseURL, trackingNumber)
 	if !strings.Contains(a.baseURL, "%s") {
@@ -69,8 +77,32 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		}
 	}
 
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
+	a.logger.Debug("Launching browser...",
+		zap.String("proxy", a.proxyURL),
+	)
+
+	// Configure launcher
+	l := launcher.New().
+		Context(ctx).
+		Headless(true).
+		NoSandbox(true)
+
+	// Configure proxy if provided
+	if a.proxyURL != "" {
+		l = l.Proxy(a.proxyURL)
+		a.logger.Debug("Browser configured with proxy")
+	}
+
+	u, err := l.Launch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	}
+
+	browser := rod.New().Context(ctx).ControlURL(u)
+	if err := browser.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to browser: %w", err)
+	}
+	defer browser.Close()
 
 	page := browser.MustPage(url)
 
@@ -98,8 +130,8 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		}
 		return a.mapResponseToDomain(resp)
 
-	case <-time.After(30 * time.Second):
-		return nil, fmt.Errorf("timeout waiting for courier response")
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout waiting for courier response: %w", ctx.Err())
 	}
 }
 

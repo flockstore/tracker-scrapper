@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,13 +12,15 @@ import (
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 	"go.uber.org/zap"
 )
 
 // InterrapidisimoAdapter handles tracking for Interrapidisimo courier via scraping.
 type InterrapidisimoAdapter struct {
-	baseURL string
-	logger  *zap.Logger
+	baseURL  string
+	proxyURL string
+	logger   *zap.Logger
 }
 
 var interKnownCodes = map[int]bool{
@@ -32,11 +35,13 @@ var interKnownCodes = map[int]bool{
 	16: true, // Archivada
 }
 
-// NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL.
-func NewInterrapidisimoAdapter(baseURL string) *InterrapidisimoAdapter {
+// NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL and optional proxy URL.
+// If proxyURL is empty, no proxy will be used.
+func NewInterrapidisimoAdapter(baseURL, proxyURL string) *InterrapidisimoAdapter {
 	return &InterrapidisimoAdapter{
-		baseURL: baseURL,
-		logger:  logger.Get(),
+		baseURL:  baseURL,
+		proxyURL: proxyURL,
+		logger:   logger.Get(),
 	}
 }
 
@@ -59,9 +64,36 @@ type interResponse struct {
 
 // GetTrackingHistory retrieves tracking history from Interrapidisimo using browser automation.
 func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
-	// Launch browser
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
+	// Create a master context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	a.logger.Debug("Launching browser...",
+		zap.String("proxy", a.proxyURL),
+	)
+
+	// Configure launcher
+	l := launcher.New().
+		Context(ctx).
+		Headless(true).
+		NoSandbox(true)
+
+	// Configure proxy if provided
+	if a.proxyURL != "" {
+		l = l.Proxy(a.proxyURL)
+		a.logger.Debug("Browser configured with proxy")
+	}
+
+	u, err := l.Launch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	}
+
+	browser := rod.New().Context(ctx).ControlURL(u)
+	if err := browser.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to browser: %w", err)
+	}
+	defer browser.Close()
 
 	// Open the page
 	page := browser.MustPage(a.baseURL)
@@ -104,8 +136,8 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 
 		return a.mapResponseToDomain(resp)
 
-	case <-time.After(30 * time.Second):
-		return nil, fmt.Errorf("timeout waiting for courier response")
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout waiting for courier response: %w", ctx.Err())
 	}
 }
 
