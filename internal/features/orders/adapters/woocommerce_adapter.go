@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -200,6 +201,11 @@ func extractTrackingInfo(order woocommerceOrder) []domain.TrackingInfo {
 		})
 	}
 
+	// Final fallback: parse customer notes
+	if len(tracking) == 0 && order.CustomerNote != "" {
+		tracking = extractTrackingFromNotes(order.CustomerNote)
+	}
+
 	return tracking
 }
 
@@ -224,6 +230,61 @@ func parseTrackingItems(value interface{}) ([]domain.TrackingInfo, error) {
 	}
 
 	return tracking, nil
+}
+
+// extractTrackingFromNotes parses customer notes to extract tracking information.
+// Matches patterns like: "No de guía: 2259176774 Paquetería: servientrega_co"
+func extractTrackingFromNotes(notes string) []domain.TrackingInfo {
+	if notes == "" {
+		return nil
+	}
+
+	// Pattern matches: "No de guía: {number} Paquetería: {carrier}"
+	// Case-insensitive, handles accents (guía/guia), flexible whitespace
+	pattern := regexp.MustCompile(`(?i)no\s+de\s+gu[ií]a:\s*(\S+).*?paqueter[ií]a:\s*(\S+)`)
+	matches := pattern.FindStringSubmatch(notes)
+
+	if len(matches) < 3 {
+		return nil
+	}
+
+	trackingNumber := strings.TrimSpace(matches[1])
+	carrier := strings.TrimSpace(matches[2])
+
+	// Normalize carrier name to standard format
+	normalizedCarrier := normalizeCarrierName(carrier)
+
+	if trackingNumber == "" || normalizedCarrier == "" {
+		return nil
+	}
+
+	return []domain.TrackingInfo{
+		{
+			TrackingNumber:   trackingNumber,
+			TrackingProvider: normalizedCarrier,
+		},
+	}
+}
+
+// normalizeCarrierName converts various carrier name formats to standardized format.
+func normalizeCarrierName(carrier string) string {
+	carrier = strings.ToLower(strings.TrimSpace(carrier))
+
+	// Map common variations to standard format
+	switch {
+	case strings.Contains(carrier, "servientrega"):
+		return "servientrega_co"
+	case strings.Contains(carrier, "coordinadora"):
+		return "coordinadora_co"
+	case strings.Contains(carrier, "interrapidisimo") || strings.Contains(carrier, "inter"):
+		return "interrapidisimo_co"
+	default:
+		// Return as-is if already in correct format or unknown
+		if strings.HasSuffix(carrier, "_co") {
+			return carrier
+		}
+		return carrier + "_co"
+	}
 }
 
 // mapItems converts WooCommerce line items and fee lines to domain OrderItems.
@@ -279,6 +340,8 @@ type woocommerceOrder struct {
 	ShippingLines []wcShippingLine `json:"shipping_lines"`
 	// MetaData contains extra fields.
 	MetaData []wcMetaData `json:"meta_data"`
+	// CustomerNote contains customer-provided notes that may include tracking info.
+	CustomerNote string `json:"customer_note"`
 }
 
 // wcMetaData represents a key-value pair in WooCommerce metadata.

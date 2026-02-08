@@ -314,3 +314,145 @@ func TestWooCommerceAdapter_HealthCheck(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+// TestExtractTrackingFromNotes_Success verifies successful extraction from valid notes.
+func TestExtractTrackingFromNotes_Success(t *testing.T) {
+	notes := "Datos de rastreo: No de guía: 2259176774 Paquetería: servientrega_co URL de seguimiento: https://www.servientrega.com/..."
+
+	tracking := extractTrackingFromNotes(notes)
+
+	require.Len(t, tracking, 1)
+	assert.Equal(t, "2259176774", tracking[0].TrackingNumber)
+	assert.Equal(t, "servientrega_co", tracking[0].TrackingProvider)
+}
+
+// TestExtractTrackingFromNotes_WithoutAccent verifies parsing works without accent.
+func TestExtractTrackingFromNotes_WithoutAccent(t *testing.T) {
+	notes := "No de guia: 1234567890 Paqueteria: coordinadora_co"
+
+	tracking := extractTrackingFromNotes(notes)
+
+	require.Len(t, tracking, 1)
+	assert.Equal(t, "1234567890", tracking[0].TrackingNumber)
+	assert.Equal(t, "coordinadora_co", tracking[0].TrackingProvider)
+}
+
+// TestExtractTrackingFromNotes_DifferentSpacing verifies flexible whitespace handling.
+func TestExtractTrackingFromNotes_DifferentSpacing(t *testing.T) {
+	notes := "No   de   guía:    9876543210    Paquetería:    interrapidisimo_co"
+
+	tracking := extractTrackingFromNotes(notes)
+
+	require.Len(t, tracking, 1)
+	assert.Equal(t, "9876543210", tracking[0].TrackingNumber)
+	assert.Equal(t, "interrapidisimo_co", tracking[0].TrackingProvider)
+}
+
+// TestExtractTrackingFromNotes_CarrierNormalization verifies carrier name normalization.
+func TestExtractTrackingFromNotes_CarrierNormalization(t *testing.T) {
+	testCases := []struct {
+		name             string
+		notes            string
+		expectedCarrier  string
+	}{
+		{
+			name:            "Servientrega without suffix",
+			notes:           "No de guía: 123 Paquetería: servientrega",
+			expectedCarrier: "servientrega_co",
+		},
+		{
+			name:            "Coordinadora with suffix",
+			notes:           "No de guía: 456 Paquetería: coordinadora_co",
+			expectedCarrier: "coordinadora_co",
+		},
+		{
+			name:            "Interrapidisimo partial name",
+			notes:           "No de guía: 789 Paquetería: inter",
+			expectedCarrier: "interrapidisimo_co",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tracking := extractTrackingFromNotes(tc.notes)
+			require.Len(t, tracking, 1)
+			assert.Equal(t, tc.expectedCarrier, tracking[0].TrackingProvider)
+		})
+	}
+}
+
+// TestExtractTrackingFromNotes_NoMatch verifies empty result when pattern doesn't match.
+func TestExtractTrackingFromNotes_NoMatch(t *testing.T) {
+	notes := "This is just a regular customer note without tracking info."
+
+	tracking := extractTrackingFromNotes(notes)
+
+	assert.Nil(t, tracking)
+}
+
+// TestExtractTrackingFromNotes_EmptyNote verifies empty result for empty notes.
+func TestExtractTrackingFromNotes_EmptyNote(t *testing.T) {
+	tracking := extractTrackingFromNotes("")
+
+	assert.Nil(t, tracking)
+}
+
+// TestNormalizeCarrierName verifies carrier name normalization logic.
+func TestNormalizeCarrierName(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{"servientrega", "servientrega_co"},
+		{"Servientrega", "servientrega_co"},
+		{"SERVIENTREGA_CO", "servientrega_co"},
+		{"coordinadora", "coordinadora_co"},
+		{"Coordinadora_co", "coordinadora_co"},
+		{"interrapidisimo", "interrapidisimo_co"},
+		{"inter", "interrapidisimo_co"},
+		{"InterRapidisimo_co", "interrapidisimo_co"},
+		{"unknown_carrier", "unknown_carrier_co"},
+		{"already_formatted_co", "already_formatted_co"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			result := normalizeCarrierName(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// TestExtractTrackingInfo_FallbackToNotes verifies notes are used as final fallback.
+func TestExtractTrackingInfo_FallbackToNotes(t *testing.T) {
+	order := woocommerceOrder{
+		ShippingLines: []wcShippingLine{},
+		MetaData:      []wcMetaData{},
+		CustomerNote:  "No de guía: 5555555555 Paquetería: servientrega_co",
+	}
+
+	tracking := extractTrackingInfo(order)
+
+	require.Len(t, tracking, 1)
+	assert.Equal(t, "5555555555", tracking[0].TrackingNumber)
+	assert.Equal(t, "servientrega_co", tracking[0].TrackingProvider)
+}
+
+// TestExtractTrackingInfo_NotesIgnoredWhenMetadataExists verifies notes are only fallback.
+func TestExtractTrackingInfo_NotesIgnoredWhenMetadataExists(t *testing.T) {
+	order := woocommerceOrder{
+		ShippingLines: []wcShippingLine{},
+		MetaData: []wcMetaData{
+			{Key: "tracking_number", Value: "9999999999"},
+			{Key: "tracking_provider", Value: "coordinadora_co"},
+		},
+		CustomerNote: "No de guía: 1111111111 Paquetería: servientrega_co",
+	}
+
+	tracking := extractTrackingInfo(order)
+
+	require.Len(t, tracking, 1)
+	// Should use metadata, not notes
+	assert.Equal(t, "9999999999", tracking[0].TrackingNumber)
+	assert.Equal(t, "coordinadora_co", tracking[0].TrackingProvider)
+}
