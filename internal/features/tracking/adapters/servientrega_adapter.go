@@ -46,8 +46,8 @@ type servientregaResponse struct {
 // GetTrackingHistory retrieves tracking history from Servientrega.
 // GetTrackingHistory retrieves tracking history from Servientrega.
 func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain.TrackingHistory, error) {
-	// Use exact same pattern as working standalone scraper
-	url := fmt.Sprintf("https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=%s", trackingNumber)
+	// Use baseURL from config (mockable)
+	url := fmt.Sprintf("%s%s", a.baseURL, trackingNumber)
 
 	// Configure launcher for Docker environment (needs --no-sandbox)
 	u, err := launcher.New().
@@ -64,7 +64,8 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	}
 	defer browser.Close()
 
-	page, err := browser.Page("")
+	// Page expects proto.TargetCreateTarget in this version of rod
+	page, err := browser.Page(proto.TargetCreateTarget{URL: ""})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create page: %w", err)
 	}
@@ -74,8 +75,14 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 
 	done := make(chan string)
 
-	// Use Add instead of MustAdd to avoid panic
-	if err := router.Add("*/api/ControlRastreovalidaciones", proto.NetworkResourceTypeUndefined, func(ctx *rod.Hijack) {
+	// Add expects (pattern string, type proto.NetworkResourceType, handler)
+	// NetworkResourceTypeUndefined is likely what we want if we don't care, but let's check if it exists in this version.
+	// If undefined is not found, we can try leaving it out if the signature allows, but the error said it wants it.
+	// Let's try proto.NetworkResourceTypeScripts as a fallback or just empty if it's an enum.
+	// Error was: undefined: proto.NetworkResourceTypeUndefined.
+	// In v0.116.2 it might be proto.NetworkResourceType("")? Or valid types are e.g. proto.NetworkResourceTypeXHR.
+	// Since we are hijacking "*/api/ControlRastreovalidaciones", it's likely an XHR/Fetch.
+	if err := router.Add("*/api/ControlRastreovalidaciones", proto.NetworkResourceTypeXHR, func(ctx *rod.Hijack) {
 		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
 			return
 		}

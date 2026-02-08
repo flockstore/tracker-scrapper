@@ -10,6 +10,7 @@ import (
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServientregaAdapter_GetTrackingHistory(t *testing.T) {
@@ -82,13 +83,14 @@ func TestServientregaAdapter_GetTrackingHistory(t *testing.T) {
 	defer ts.Close()
 
 	// Initialize the adapter with the mock server URL
-	adapter := NewServientregaAdapter(ts.URL)
+	// Append /?Guia= to match the structure expected by the adapter
+	adapter := NewServientregaAdapter(ts.URL + "/?Guia=")
 
 	// Call the method
 	history, err := adapter.GetTrackingHistory("2259200365")
 
 	// Assertions
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, history)
 	assert.Equal(t, domain.TrackingStatusProcessing, history.GlobalStatus)
 	assert.Len(t, history.History, 3)
