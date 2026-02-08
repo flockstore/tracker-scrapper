@@ -45,6 +45,10 @@ func (r *RedisBannerRepository) Save(ctx context.Context, banner *domain.Banner)
 func (r *RedisBannerRepository) Get(ctx context.Context) (*domain.Banner, error) {
 	data, err := r.cache.Get(ctx, bannerCacheKey)
 	if err != nil {
+		// Check if the error is due to key not found
+		if err.Error() == fmt.Sprintf("key not found: %s", bannerCacheKey) {
+			return nil, nil // Return nil, nil to indicate not found
+		}
 		return nil, fmt.Errorf("failed to get banner from cache: %w", err)
 	}
 	if data == nil {
