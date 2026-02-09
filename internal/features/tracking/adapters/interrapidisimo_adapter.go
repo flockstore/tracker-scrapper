@@ -74,7 +74,8 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	var proxyForwarder *proxy.ForwardingProxy
 	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
 		var err error
-		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL())
+		// Whitelist only Interrapidisimo domains
+		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL(), "interrapidisimo.com")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy forwarder: %w", err)
 		}

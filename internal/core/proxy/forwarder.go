@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,26 +21,43 @@ import (
 // ForwardingProxy creates a local proxy that forwards requests to an upstream proxy with credentials.
 // This solves Chromium's limitation of not supporting proxy authentication via command line.
 type ForwardingProxy struct {
-	localPort   int
-	upstreamURL *url.URL
-	server      *http.Server
-	listener    net.Listener
-	logger      *zap.Logger
-	mu          sync.Mutex
-	running     bool
+	localPort      int
+	upstreamURL    *url.URL
+	server         *http.Server
+	listener       net.Listener
+	logger         *zap.Logger
+	mu             sync.Mutex
+	running        bool
+	allowedDomains []string
+}
+
+// RedirectLogger adapts zap logger to goproxy.Logger interface
+type RedirectLogger struct {
+	logger *zap.Logger
+}
+
+func (l *RedirectLogger) Printf(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	// Filter out verbose CONNECT handler logs if desired, or log as debug
+	if strings.Contains(msg, "Running") && strings.Contains(msg, "CONNECT handlers") {
+		return
+	}
+	l.logger.Debug("goproxy: " + msg)
 }
 
 // NewForwardingProxy creates a new forwarding proxy.
 // upstreamURL should include credentials, e.g., "http://user:pass@host:port"
-func NewForwardingProxy(upstreamURL string) (*ForwardingProxy, error) {
+// allowedDomains is a list of domains to allow (e.g., "mobile.servientrega.com"). If empty, all domains are allowed.
+func NewForwardingProxy(upstreamURL string, allowedDomains ...string) (*ForwardingProxy, error) {
 	parsed, err := url.Parse(upstreamURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid upstream proxy URL: %w", err)
 	}
 
 	return &ForwardingProxy{
-		upstreamURL: parsed,
-		logger:      logger.Get(),
+		upstreamURL:    parsed,
+		logger:         logger.Get(),
+		allowedDomains: allowedDomains,
 	}, nil
 }
 
@@ -55,7 +73,8 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 
 	// Create goproxy server
 	proxy := goproxy.NewProxyHttpServer()
-	proxy.Verbose = true // Enable for debugging
+	proxy.Verbose = true // Keep verbose but redirect logging
+	proxy.Logger = &RedirectLogger{logger: fp.logger}
 
 	// Extract credentials from upstream URL
 	var proxyAuth string
@@ -70,8 +89,31 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 	upstreamHost := fp.upstreamURL.Host
 	log := fp.logger
 
+	// Helper to check if a host is allowed
+	isAllowed := func(host string) bool {
+		if len(fp.allowedDomains) == 0 {
+			return true
+		}
+		// Strip port if present
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		for _, domain := range fp.allowedDomains {
+			if strings.HasSuffix(host, domain) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Create a custom dial function that routes ALL connections through upstream proxy
 	dialThroughProxy := func(network, addr string) (net.Conn, error) {
+		// Check allowlist
+		if !isAllowed(addr) {
+			log.Debug("Blocked connection to disallowed domain", zap.String("target", addr))
+			return nil, fmt.Errorf("access denied to domain: %s", addr)
+		}
+
 		log.Debug("ConnectDial called",
 			zap.String("network", network),
 			zap.String("target", addr),
@@ -131,6 +173,29 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 		Dial: dialThroughProxy,
 	}
 
+	// Add Proxy-Authorization header for regular HTTP requests
+	// AND filter requests based on allowlist
+	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		if !isAllowed(req.URL.Host) {
+			log.Debug("Blocked HTTP request to disallowed domain", zap.String("url", req.URL.String()))
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied")
+		}
+
+		if proxyAuth != "" {
+			req.Header.Set("Proxy-Authorization", proxyAuth)
+		}
+		return req, nil
+	})
+
+	// Handle CONNECT (HTTPS) requests - reject if not allowed
+	proxy.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+		if !isAllowed(host) {
+			log.Debug("Blocked CONNECT request to disallowed domain", zap.String("host", host))
+			return goproxy.RejectConnect, host
+		}
+		return goproxy.OkConnect, host
+	})
+
 	// Find an available port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -146,6 +211,7 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 	fp.logger.Debug("Starting local proxy forwarder",
 		zap.String("local_addr", fp.LocalAddr()),
 		zap.String("upstream", upstreamHost),
+		zap.Strings("allowed_domains", fp.allowedDomains),
 	)
 
 	// Start server in background

@@ -83,7 +83,8 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	var proxyForwarder *proxy.ForwardingProxy
 	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
 		var err error
-		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL())
+		// Whitelist only Coordinadora domains to save bandwidth
+		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL(), "coordinadora.com")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy forwarder: %w", err)
 		}
