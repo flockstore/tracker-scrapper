@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -54,7 +55,7 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 
 	// Create goproxy server
 	proxy := goproxy.NewProxyHttpServer()
-	proxy.Verbose = false
+	proxy.Verbose = true // Enable for debugging
 
 	// Extract credentials from upstream URL
 	var proxyAuth string
@@ -65,41 +66,70 @@ func (fp *ForwardingProxy) Start(ctx context.Context) (string, error) {
 		proxyAuth = "Basic " + credentials
 	}
 
-	// Build upstream URL without credentials for the transport
+	// Build upstream host for the transport
 	upstreamHost := fp.upstreamURL.Host
-	upstreamScheme := fp.upstreamURL.Scheme
-	if upstreamScheme == "" {
-		upstreamScheme = "http"
-	}
+	log := fp.logger
 
-	// Configure transport to use upstream proxy
-	proxy.Tr = &http.Transport{
-		Proxy: func(req *http.Request) (*url.URL, error) {
-			return &url.URL{
-				Scheme: upstreamScheme,
-				Host:   upstreamHost,
-			}, nil
-		},
-		ProxyConnectHeader: http.Header{},
-	}
+	// Create a custom dial function that routes ALL connections through upstream proxy
+	dialThroughProxy := func(network, addr string) (net.Conn, error) {
+		log.Debug("ConnectDial called",
+			zap.String("network", network),
+			zap.String("target", addr),
+			zap.String("upstream", upstreamHost),
+		)
 
-	// Add Proxy-Authorization header for CONNECT requests
-	if proxyAuth != "" {
-		proxy.Tr.ProxyConnectHeader.Set("Proxy-Authorization", proxyAuth)
-	}
-
-	// Add Proxy-Authorization header for regular HTTP requests
-	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		if proxyAuth != "" {
-			req.Header.Set("Proxy-Authorization", proxyAuth)
+		// Connect to upstream proxy
+		conn, err := net.DialTimeout("tcp", upstreamHost, 30*time.Second)
+		if err != nil {
+			log.Error("Failed to dial upstream proxy",
+				zap.String("upstream", upstreamHost),
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("failed to connect to upstream proxy %s: %w", upstreamHost, err)
 		}
-		return req, nil
-	})
 
-	// Handle CONNECT (HTTPS) requests
-	proxy.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-		return goproxy.OkConnect, host
-	})
+		// Send CONNECT request to upstream proxy
+		connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", addr, addr)
+		if proxyAuth != "" {
+			connectReq += fmt.Sprintf("Proxy-Authorization: %s\r\n", proxyAuth)
+		}
+		connectReq += "\r\n"
+
+		log.Debug("Sending CONNECT to upstream", zap.String("target", addr))
+
+		if _, err := conn.Write([]byte(connectReq)); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to send CONNECT request: %w", err)
+		}
+
+		// Read response from upstream proxy
+		br := bufio.NewReader(conn)
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+		}
+
+		if resp.StatusCode != 200 {
+			conn.Close()
+			log.Error("Upstream proxy rejected CONNECT",
+				zap.Int("status", resp.StatusCode),
+				zap.String("target", addr),
+			)
+			return nil, fmt.Errorf("upstream proxy CONNECT failed with status: %d", resp.StatusCode)
+		}
+
+		log.Debug("CONNECT tunnel established", zap.String("target", addr))
+		return conn, nil
+	}
+
+	// Set ConnectDial for HTTPS CONNECT requests
+	proxy.ConnectDial = dialThroughProxy
+
+	// Also set Tr.Dial to route HTTP requests through the proxy tunnel
+	proxy.Tr = &http.Transport{
+		Dial: dialThroughProxy,
+	}
 
 	// Find an available port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
