@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -133,7 +134,24 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 
 	// Pattern from user example: */wp-json/rgc/v1/detail_tracking*
 	router.MustAdd("*/wp-json/rgc/v1/detail_tracking*", func(ctx *rod.Hijack) {
-		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
+		// Create proxy-aware client if proxy is used
+		client := http.DefaultClient
+		if localProxyAddr != "" {
+			proxyURL, err := url.Parse(localProxyAddr)
+			if err != nil {
+				a.logger.Error("Failed to parse local proxy URL", zap.Error(err))
+			} else {
+				client = &http.Client{
+					Transport: &http.Transport{
+						Proxy: http.ProxyURL(proxyURL),
+					},
+					Timeout: 30 * time.Second,
+				}
+			}
+		}
+
+		if err := ctx.LoadResponse(client, true); err != nil {
+			a.logger.Error("Failed to load response", zap.Error(err))
 			return
 		}
 		done <- []byte(ctx.Response.Body())

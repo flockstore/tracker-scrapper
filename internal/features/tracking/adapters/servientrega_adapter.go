@@ -49,10 +49,10 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	)
 
 	// Use baseURL from config (mockable)
-	url := fmt.Sprintf("%s%s", a.baseURL, trackingNumber)
+	trackingURL := fmt.Sprintf("%s%s", a.baseURL, trackingNumber)
 
 	// fast fail: check connectivity first
-	if err := a.checkConnectivity(ctx, url); err != nil {
+	if err := a.checkConnectivity(ctx, trackingURL); err != nil {
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
@@ -131,7 +131,25 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	// Add expects (pattern string, type proto.NetworkResourceType, handler)
 	if err := router.Add("*/api/ControlRastreovalidaciones", proto.NetworkResourceTypeXHR, func(ctx *rod.Hijack) {
 		a.logger.Debug("Intercepted 'ControlRastreovalidaciones' request")
-		if err := ctx.LoadResponse(http.DefaultClient, true); err != nil {
+
+		// Create proxy-aware client if proxy is used
+		client := http.DefaultClient
+		if localProxyAddr != "" {
+			proxyURL, err := url.Parse(localProxyAddr)
+			if err != nil {
+				a.logger.Error("Failed to parse local proxy URL", zap.Error(err))
+				// continue with default client (might fail if direct access blocked)
+			} else {
+				client = &http.Client{
+					Transport: &http.Transport{
+						Proxy: http.ProxyURL(proxyURL),
+					},
+					Timeout: 30 * time.Second,
+				}
+			}
+		}
+
+		if err := ctx.LoadResponse(client, true); err != nil {
 			a.logger.Error("Failed to load response", zap.Error(err))
 			return
 		}
@@ -146,8 +164,8 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	const maxRetries = 3
 	var navErr error
 	for i := 1; i <= maxRetries; i++ {
-		a.logger.Debug("Navigating to URL", zap.String("url", url), zap.Int("attempt", i), zap.Int("max_retries", maxRetries))
-		navErr = page.Navigate(url)
+		a.logger.Debug("Navigating to URL", zap.String("url", trackingURL), zap.Int("attempt", i), zap.Int("max_retries", maxRetries))
+		navErr = page.Navigate(trackingURL)
 		if navErr == nil {
 			break
 		}
