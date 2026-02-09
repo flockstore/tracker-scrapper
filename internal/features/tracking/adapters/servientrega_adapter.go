@@ -119,6 +119,15 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	}
 	defer browser.Close()
 
+	// Handle proxy authentication BEFORE creating page
+	// MustHandleAuth sets up a listener for 407 auth challenges
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
+		a.logger.Debug("Proxy authentication handler registered")
+		// Small delay to ensure handler is ready
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	a.logger.Debug("Creating page...")
 	// Page expects proto.TargetCreateTarget in this version of rod
 	page, err := browser.Page(proto.TargetCreateTarget{URL: ""})
@@ -127,14 +136,6 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	}
 	// Measure page operations with the same context
 	page = page.Context(ctx)
-
-	// Handle proxy authentication if credentials were provided
-	// MustHandleAuth returns a wait function - we don't need to call it,
-	// it runs in the background and handles 407 Proxy Auth Required challenges
-	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
-		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
-		a.logger.Debug("Proxy authentication configured")
-	}
 
 	// Stealth: Hide webdriver property
 	if _, err := page.EvalOnNewDocument("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"); err != nil {
