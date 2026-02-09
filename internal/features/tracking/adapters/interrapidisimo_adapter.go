@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tracker-scrapper/internal/core/logger"
+	"tracker-scrapper/internal/core/proxy"
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
@@ -19,7 +20,7 @@ import (
 // InterrapidisimoAdapter handles tracking for Interrapidisimo courier via scraping.
 type InterrapidisimoAdapter struct {
 	baseURL string
-	proxy   ProxySettings
+	proxy   proxy.Settings
 	logger  *zap.Logger
 }
 
@@ -36,10 +37,10 @@ var interKnownCodes = map[int]bool{
 }
 
 // NewInterrapidisimoAdapter creates a new InterrapidisimoAdapter with the given base URL and proxy settings.
-func NewInterrapidisimoAdapter(baseURL string, proxy ProxySettings) *InterrapidisimoAdapter {
+func NewInterrapidisimoAdapter(baseURL string, proxySettings proxy.Settings) *InterrapidisimoAdapter {
 	return &InterrapidisimoAdapter{
 		baseURL: baseURL,
-		proxy:   proxy,
+		proxy:   proxySettings,
 		logger:  logger.Get(),
 	}
 }
@@ -67,9 +68,28 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// Start local proxy forwarder if proxy is configured with credentials
+	var localProxyAddr string
+	var proxyForwarder *proxy.ForwardingProxy
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		var err error
+		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create proxy forwarder: %w", err)
+		}
+		localProxyAddr, err = proxyForwarder.Start(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start proxy forwarder: %w", err)
+		}
+		defer proxyForwarder.Stop()
+		a.logger.Debug("Local proxy forwarder started", zap.String("local_addr", localProxyAddr))
+	} else if a.proxy.HasProxy() {
+		localProxyAddr = a.proxy.HostPort()
+	}
+
 	a.logger.Debug("Launching browser...",
 		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
-		zap.String("proxy_host", a.proxy.HostPort()),
+		zap.String("proxy_addr", localProxyAddr),
 	)
 
 	// Configure launcher
@@ -78,10 +98,10 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 		Headless(true).
 		NoSandbox(true)
 
-	// Configure proxy if enabled
-	if a.proxy.HasProxy() {
-		l = l.Proxy(a.proxy.HostPort())
-		a.logger.Debug("Browser configured with proxy")
+	// Configure proxy - use local forwarder address (no auth needed)
+	if localProxyAddr != "" {
+		l = l.Proxy(localProxyAddr)
+		a.logger.Debug("Browser configured with proxy", zap.String("proxy", localProxyAddr))
 	}
 
 	u, err := l.Launch()
@@ -94,14 +114,6 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 		return nil, fmt.Errorf("failed to connect to browser: %w", err)
 	}
 	defer browser.Close()
-
-	// Handle proxy authentication if credentials were provided
-	// MustHandleAuth returns a wait function - we don't need to call it,
-	// it runs in the background and handles 407 Proxy Auth Required challenges
-	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
-		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
-		a.logger.Debug("Proxy authentication configured")
-	}
 
 	// Open the page
 	page := browser.MustPage(a.baseURL)

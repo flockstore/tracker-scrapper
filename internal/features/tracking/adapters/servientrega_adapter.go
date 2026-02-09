@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tracker-scrapper/internal/core/logger"
+	"tracker-scrapper/internal/core/proxy"
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
@@ -18,52 +19,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// ProxySettings contains proxy configuration for adapters.
-type ProxySettings struct {
-	Enabled  bool
-	Hostname string
-	Port     int
-	Username string
-	Password string
-}
-
-// HasProxy returns true if proxy is enabled and configured.
-func (p ProxySettings) HasProxy() bool {
-	return p.Enabled && p.Hostname != "" && p.Port > 0
-}
-
-// HostPort returns the proxy host:port string (e.g., "http://geo.iproyal.com:12321").
-func (p ProxySettings) HostPort() string {
-	if !p.HasProxy() {
-		return ""
-	}
-	return fmt.Sprintf("http://%s:%d", p.Hostname, p.Port)
-}
-
-// FullURL returns the full proxy URL with credentials (for HTTP client).
-func (p ProxySettings) FullURL() string {
-	if !p.HasProxy() {
-		return ""
-	}
-	if p.Username != "" && p.Password != "" {
-		return fmt.Sprintf("http://%s:%s@%s:%d", p.Username, p.Password, p.Hostname, p.Port)
-	}
-	return p.HostPort()
-}
-
 // ServientregaAdapter handles tracking for Servientrega courier.
 type ServientregaAdapter struct {
 	baseURL     string
-	proxy       ProxySettings
+	proxy       proxy.Settings
 	courierName string
 	logger      *zap.Logger
 }
 
 // NewServientregaAdapter creates a new ServientregaAdapter with the given base URL and proxy settings.
-func NewServientregaAdapter(baseURL string, proxy ProxySettings) *ServientregaAdapter {
+func NewServientregaAdapter(baseURL string, proxySettings proxy.Settings) *ServientregaAdapter {
 	return &ServientregaAdapter{
 		baseURL:     baseURL,
-		proxy:       proxy,
+		proxy:       proxySettings,
 		courierName: "servientrega_co",
 		logger:      logger.Get(),
 	}
@@ -88,9 +56,30 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
+	// Start local proxy forwarder if proxy is configured with credentials
+	// This solves Chromium's limitation of not supporting proxy auth via command line
+	var localProxyAddr string
+	var proxyForwarder *proxy.ForwardingProxy
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		var err error
+		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create proxy forwarder: %w", err)
+		}
+		localProxyAddr, err = proxyForwarder.Start(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start proxy forwarder: %w", err)
+		}
+		defer proxyForwarder.Stop()
+		a.logger.Debug("Local proxy forwarder started", zap.String("local_addr", localProxyAddr))
+	} else if a.proxy.HasProxy() {
+		// Proxy without credentials (IP whitelist mode)
+		localProxyAddr = a.proxy.HostPort()
+	}
+
 	a.logger.Debug("Launching browser...",
 		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
-		zap.String("proxy_host", a.proxy.HostPort()),
+		zap.String("proxy_addr", localProxyAddr),
 	)
 	// Configure launcher for Docker environment (needs --no-sandbox)
 	// Use Context(ctx) to ensure launch respects timeout
@@ -101,10 +90,10 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		NoSandbox(true).
 		Set("user-agent", stealthUA) // Set User-Agent in browser
 
-	// Configure proxy if enabled (use only host:port, not credentials)
-	if a.proxy.HasProxy() {
-		l = l.Proxy(a.proxy.HostPort())
-		a.logger.Debug("Browser configured with proxy")
+	// Configure proxy - use local forwarder address (no auth needed)
+	if localProxyAddr != "" {
+		l = l.Proxy(localProxyAddr)
+		a.logger.Debug("Browser configured with proxy", zap.String("proxy", localProxyAddr))
 	}
 
 	u, err := l.Launch()
@@ -118,15 +107,6 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("failed to connect to browser: %w", err)
 	}
 	defer browser.Close()
-
-	// Handle proxy authentication BEFORE creating page
-	// MustHandleAuth sets up a listener for 407 auth challenges
-	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
-		browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
-		a.logger.Debug("Proxy authentication handler registered")
-		// Small delay to ensure handler is ready
-		time.Sleep(100 * time.Millisecond)
-	}
 
 	a.logger.Debug("Creating page...")
 	// Page expects proto.TargetCreateTarget in this version of rod

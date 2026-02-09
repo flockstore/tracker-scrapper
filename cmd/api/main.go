@@ -8,6 +8,7 @@ import (
 	"tracker-scrapper/internal/core/cache"
 	"tracker-scrapper/internal/core/config"
 	"tracker-scrapper/internal/core/logger"
+	"tracker-scrapper/internal/core/proxy"
 	"tracker-scrapper/internal/core/server"
 	orderadapter "tracker-scrapper/internal/features/orders/adapters"
 	orderhandler "tracker-scrapper/internal/features/orders/handler"
@@ -76,21 +77,21 @@ func main() {
 	orderHandler := orderhandler.NewOrderHandler(orderService)
 
 	// Initialize Tracking Providers with proxy settings
-	coordinadoraProxy := trackingadapter.ProxySettings{
+	coordinadoraProxy := proxy.Settings{
 		Enabled:  cfg.Proxy.Coordinadora,
 		Hostname: cfg.Proxy.Hostname,
 		Port:     cfg.Proxy.Port,
 		Username: cfg.Proxy.Username,
 		Password: cfg.Proxy.Password,
 	}
-	servientregaProxy := trackingadapter.ProxySettings{
+	servientregaProxy := proxy.Settings{
 		Enabled:  cfg.Proxy.Servientrega,
 		Hostname: cfg.Proxy.Hostname,
 		Port:     cfg.Proxy.Port,
 		Username: cfg.Proxy.Username,
 		Password: cfg.Proxy.Password,
 	}
-	interrapidisimoProxy := trackingadapter.ProxySettings{
+	interrapidisimoProxy := proxy.Settings{
 		Enabled:  cfg.Proxy.Interrapidisimo,
 		Hostname: cfg.Proxy.Hostname,
 		Port:     cfg.Proxy.Port,

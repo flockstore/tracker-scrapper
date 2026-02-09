@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tracker-scrapper/internal/core/logger"
+	"tracker-scrapper/internal/core/proxy"
 	"tracker-scrapper/internal/features/tracking/domain"
 
 	"github.com/go-rod/rod"
@@ -19,7 +20,7 @@ import (
 // CoordinadoraAdapter handles tracking for Coordinadora courier via scraping.
 type CoordinadoraAdapter struct {
 	baseURL string
-	proxy   ProxySettings
+	proxy   proxy.Settings
 	logger  *zap.Logger
 }
 
@@ -42,10 +43,10 @@ var coordKnownCodes = map[string]bool{
 }
 
 // NewCoordinadoraAdapter creates a new CoordinadoraAdapter with the given base URL and proxy settings.
-func NewCoordinadoraAdapter(baseURL string, proxy ProxySettings) *CoordinadoraAdapter {
+func NewCoordinadoraAdapter(baseURL string, proxySettings proxy.Settings) *CoordinadoraAdapter {
 	return &CoordinadoraAdapter{
 		baseURL: baseURL,
-		proxy:   proxy,
+		proxy:   proxySettings,
 		logger:  logger.Get(),
 	}
 }
@@ -76,9 +77,28 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		}
 	}
 
+	// Start local proxy forwarder if proxy is configured with credentials
+	var localProxyAddr string
+	var proxyForwarder *proxy.ForwardingProxy
+	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
+		var err error
+		proxyForwarder, err = proxy.NewForwardingProxy(a.proxy.FullURL())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create proxy forwarder: %w", err)
+		}
+		localProxyAddr, err = proxyForwarder.Start(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start proxy forwarder: %w", err)
+		}
+		defer proxyForwarder.Stop()
+		a.logger.Debug("Local proxy forwarder started", zap.String("local_addr", localProxyAddr))
+	} else if a.proxy.HasProxy() {
+		localProxyAddr = a.proxy.HostPort()
+	}
+
 	a.logger.Debug("Launching browser...",
 		zap.Bool("proxy_enabled", a.proxy.HasProxy()),
-		zap.String("proxy_host", a.proxy.HostPort()),
+		zap.String("proxy_addr", localProxyAddr),
 	)
 
 	// Configure launcher
@@ -87,10 +107,10 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		Headless(true).
 		NoSandbox(true)
 
-	// Configure proxy if enabled
-	if a.proxy.HasProxy() {
-		l = l.Proxy(a.proxy.HostPort())
-		a.logger.Debug("Browser configured with proxy")
+	// Configure proxy - use local forwarder address (no auth needed)
+	if localProxyAddr != "" {
+		l = l.Proxy(localProxyAddr)
+		a.logger.Debug("Browser configured with proxy", zap.String("proxy", localProxyAddr))
 	}
 
 	u, err := l.Launch()
@@ -103,14 +123,6 @@ func (a *CoordinadoraAdapter) GetTrackingHistory(trackingNumber string) (*domain
 		return nil, fmt.Errorf("failed to connect to browser: %w", err)
 	}
 	defer browser.Close()
-
-	// Handle proxy authentication if credentials were provided
-	// MustHandleAuth returns a wait function - we don't need to call it,
-	// it runs in the background and handles 407 Proxy Auth Required challenges
-	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
-		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
-		a.logger.Debug("Proxy authentication configured")
-	}
 
 	page := browser.MustPage(pageURL)
 
