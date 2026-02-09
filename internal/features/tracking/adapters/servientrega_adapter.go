@@ -129,8 +129,10 @@ func (a *ServientregaAdapter) GetTrackingHistory(trackingNumber string) (*domain
 	page = page.Context(ctx)
 
 	// Handle proxy authentication if credentials were provided
+	// MustHandleAuth returns a wait function - we don't need to call it,
+	// it runs in the background and handles 407 Proxy Auth Required challenges
 	if a.proxy.HasProxy() && a.proxy.Username != "" && a.proxy.Password != "" {
-		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)()
+		go browser.MustHandleAuth(a.proxy.Username, a.proxy.Password)
 		a.logger.Debug("Proxy authentication configured")
 	}
 
