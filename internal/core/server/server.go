@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/contrib/fiberzap/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/gofiber/swagger"
 	"go.uber.org/zap"
@@ -37,6 +38,8 @@ func New(cfg *config.AppConfig) *Server {
 	app.Use(fiberzap.New(fiberzap.Config{
 		Logger: logger.Get(),
 	}))
+
+	app.Use(recover.New())
 
 	app.Get("/swagger/*", swagger.HandlerDefault)
 

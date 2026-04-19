@@ -3,10 +3,12 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"tracker-scrapper/internal/core/logger"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 	"go.uber.org/zap"
 )
 
@@ -117,20 +120,39 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	}
 	defer browser.Close()
 
-	// Open the page
-	page := browser.MustPage(a.baseURL)
+	page, err := browser.Page(proto.TargetCreateTarget{URL: ""})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create page: %w", err)
+	}
+	page = page.Context(ctx)
 
-	// Wait for input field
-	page.MustElement("#inputGuide").MustWaitVisible()
+	if err := a.navigateWithRetry(page, a.baseURL, 3); err != nil {
+		return nil, fmt.Errorf("failed to navigate to interrapidisimo page: %w", err)
+	}
+
+	blocked, blockReason := detectInterrapidisimoBlocking(page)
+	if blocked {
+		return nil, fmt.Errorf("interrapidisimo unavailable or blocked by edge protection: %s", blockReason)
+	}
+
+	inputElement, err := a.waitElementWithRetry(page, "#inputGuide", 3, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("tracking input field unavailable: %w", err)
+	}
+
+	searchButton, err := a.waitElementWithRetry(page, ".search-button", 3, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("tracking search button unavailable: %w", err)
+	}
 
 	// Setup request hijacking
 	router := page.HijackRequests()
-	defer router.MustStop()
+	defer router.Stop()
 
-	done := make(chan []byte)
+	done := make(chan []byte, 1)
 
 	// Intercept the API call
-	router.MustAdd("*/ObtenerRastreoGuiasClientePost", func(ctx *rod.Hijack) {
+	interceptHandler := func(ctx *rod.Hijack) {
 		// Create proxy-aware client if proxy is used
 		client := http.DefaultClient
 		if localProxyAddr != "" {
@@ -151,14 +173,27 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 			a.logger.Error("Failed to load response", zap.Error(err))
 			return
 		}
-		done <- []byte(ctx.Response.Body())
-	})
+		select {
+		case done <- []byte(ctx.Response.Body()):
+		default:
+		}
+	}
 
+	if err := router.Add("*/ObtenerRastreoGuiasClientePost*", proto.NetworkResourceTypeXHR, interceptHandler); err != nil {
+		return nil, fmt.Errorf("failed to add XHR interceptor: %w", err)
+	}
+	if err := router.Add("*/ObtenerRastreoGuiasClientePost*", proto.NetworkResourceTypeFetch, interceptHandler); err != nil {
+		a.logger.Warn("failed to add Fetch interceptor", zap.Error(err))
+	}
 	go router.Run()
 
 	// Interact with the page
-	page.MustElement("#inputGuide").MustInput(trackingNumber)
-	page.MustElement(".search-button").MustClick()
+	if err := inputElement.Input(trackingNumber); err != nil {
+		return nil, fmt.Errorf("failed to fill tracking number: %w", err)
+	}
+	if err := searchButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return nil, fmt.Errorf("failed to trigger tracking search: %w", err)
+	}
 
 	// Wait for response with timeout
 	select {
@@ -178,6 +213,80 @@ func (a *InterrapidisimoAdapter) GetTrackingHistory(trackingNumber string) (*dom
 	case <-ctx.Done():
 		return nil, fmt.Errorf("timeout waiting for courier response: %w", ctx.Err())
 	}
+}
+
+// navigateWithRetry opens a page URL with bounded retries.
+func (a *InterrapidisimoAdapter) navigateWithRetry(page *rod.Page, pageURL string, maxRetries int) error {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		lastErr = page.Navigate(pageURL)
+		if lastErr == nil {
+			return nil
+		}
+
+		a.logger.Warn("Interrapidisimo navigation failed",
+			zap.Int("attempt", attempt),
+			zap.Int("max_retries", maxRetries),
+			zap.Error(lastErr),
+		)
+		time.Sleep(2 * time.Second)
+	}
+
+	return lastErr
+}
+
+// waitElementWithRetry retries selector lookup and visibility checks with backoff.
+func (a *InterrapidisimoAdapter) waitElementWithRetry(
+	page *rod.Page,
+	selector string,
+	maxRetries int,
+	retryDelay time.Duration,
+) (*rod.Element, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		element, err := page.Timeout(15 * time.Second).Element(selector)
+		if err == nil {
+			err = element.WaitVisible()
+			if err == nil {
+				return element, nil
+			}
+		}
+
+		lastErr = err
+		a.logger.Warn("Interrapidisimo selector resolution failed",
+			zap.String("selector", selector),
+			zap.Int("attempt", attempt),
+			zap.Int("max_retries", maxRetries),
+			zap.Error(err),
+		)
+		time.Sleep(retryDelay)
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("unknown selector resolution error")
+	}
+
+	return nil, lastErr
+}
+
+// detectInterrapidisimoBlocking checks for known edge protection pages.
+func detectInterrapidisimoBlocking(page *rod.Page) (bool, string) {
+	html, err := page.HTML()
+	if err != nil {
+		return false, ""
+	}
+
+	lowered := strings.ToLower(html)
+	if strings.Contains(lowered, "errors.edgesuite.net") {
+		return true, "errors.edgesuite.net"
+	}
+	if strings.Contains(lowered, "reference #") && strings.Contains(lowered, "error occurred while processing your request") {
+		return true, "akamai reference error"
+	}
+
+	return false, ""
 }
 
 // mapResponseToDomain converts Interrapidisimo response to domain structure.

@@ -155,3 +155,33 @@ func TestTrackingHandler_GetTrackingHistory_CourierNotSupported(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, errResp.Message, "courier not supported")
 }
+
+// TestTrackingHandler_GetTrackingHistory_CourierUnavailable verifies timeout errors map to 503.
+func TestTrackingHandler_GetTrackingHistory_CourierUnavailable(t *testing.T) {
+	provider := &mockTrackingProvider{
+		supportedCourier: "interrapidisimo_co",
+		returnError:      context.DeadlineExceeded,
+	}
+
+	trackingSvc := service.NewTrackingService([]ports.TrackingProvider{provider}, &mockCache{}, 30*time.Second)
+	handler := NewTrackingHandler(trackingSvc)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("requestid", "test-ray-id")
+		return c.Next()
+	})
+	app.Get("/tracking/:number", handler.GetTrackingHistory)
+
+	req := httptest.NewRequest("GET", "/tracking/12345?courier=interrapidisimo_co", nil)
+	resp, err := app.Test(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode)
+
+	var errResp ErrorResponse
+	err = json.NewDecoder(resp.Body).Decode(&errResp)
+	require.NoError(t, err)
+	assert.Contains(t, errResp.Message, "courier temporarily unavailable")
+	assert.Equal(t, "test-ray-id", errResp.RayID)
+}

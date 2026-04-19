@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"tracker-scrapper/internal/features/tracking/service"
 
 	"github.com/gofiber/fiber/v2"
@@ -60,6 +63,13 @@ func (h *TrackingHandler) GetTrackingHistory(c *fiber.Ctx) error {
 		if err == service.ErrCourierNotSupported {
 			return c.Status(fiber.StatusNotFound).JSON(ErrorResponse{
 				Message: "courier not supported",
+				RayID:   c.Locals("requestid").(string),
+			})
+		}
+
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "temporarily unavailable") {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(ErrorResponse{
+				Message: "courier temporarily unavailable",
 				RayID:   c.Locals("requestid").(string),
 			})
 		}
