@@ -55,8 +55,11 @@ func (s *OrderService) GetOrder(orderID, email string) (*domain.Order, error) {
 	}
 
 	// Cache miss or error - fetch from provider
-	order, err := s.provider.GetOrder(orderID)
+	order, err := s.provider.GetOrder(orderID, email)
 	if err != nil {
+		if errors.Is(err, ports.ErrOrderNotFound) {
+			return nil, ErrOrderNotFound
+		}
 		return nil, err
 	}
 

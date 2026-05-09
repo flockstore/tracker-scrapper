@@ -1,11 +1,11 @@
 # Tracker Scrapper
 
-A production-ready Private API that integrates with WooCommerce to retrieve order information and scrape Colombian courier tracking pages. Built with **Domain-Driven Design (DDD)** and **Hexagonal Architecture** (Ports and Adapters), organized by **Features/Bounded Contexts** for scalability, maintainability, and testability.
+A production-ready Private API that integrates with Mannaiah to retrieve order information and scrape Colombian courier tracking pages. Built with **Domain-Driven Design (DDD)** and **Hexagonal Architecture** (Ports and Adapters), organized by **Features/Bounded Contexts** for scalability, maintainability, and testability.
 
 ## 🚀 Features
 
 ### Core Functionality
-- **WooCommerce Integration**: Fetch order details with email validation
+- **Mannaiah Integration**: Fetch order details with email validation through M2M auth
 - **Multi-Courier Support**: Automated tracking scraping for:
   - 🚚 Coordinadora (JSON API scraping)
   - 📦 Servientrega (Browser automation with go-rod)
@@ -42,7 +42,7 @@ internal/
     │   ├── ports/             # Interfaces (OrderProvider)
     │   ├── service/           # Business logic with cache
     │   ├── handler/           # HTTP handlers
-    │   └── adapters/          # WooCommerce adapter
+    │   └── adapters/          # Mannaiah adapter
     └── tracking/
         ├── domain/            # Tracking entities & status enums
         ├── ports/             # Interfaces (TrackingProvider)
@@ -75,10 +75,13 @@ APP_ENV=development
 LOG_LEVEL=debug
 SERVER_PORT=8080
 
-# WooCommerce Integration
-WC_URL=https://your-woocommerce-site.com
-WC_CONSUMER_KEY=ck_your_consumer_key_here
-WC_CONSUMER_SECRET=cs_your_consumer_secret_here
+# Mannaiah Backend Integration
+MANNAIAH_BACKEND_URL=https://api.flockstore.co
+LOGTO_M2M_ENDPOINT=https://your-logto-tenant
+# LOGTO_M2M_TOKEN_ENDPOINT=https://your-logto-tenant/oidc/token
+LOGTO_M2M_APP_ID=your_m2m_app_id
+LOGTO_M2M_APP_SECRET=your_m2m_app_secret
+LOGTO_M2M_SCOPE=order:view contact:view shipping:quotations
 
 # Courier Tracking URLs
 COURIER_COORDINADORA_CO=https://coordinadora.com/rastreo/rastreo-de-guia/detalle-de-rastreo-de-guia/?guia=
@@ -273,10 +276,10 @@ docker ps | grep redis
 docker logs <redis-container-id>
 ```
 
-**WooCommerce Connection Failed:**
-- Verify `WC_URL`, `WC_CONSUMER_KEY`, and `WC_CONSUMER_SECRET` are correct
-- Check that the WooCommerce REST API is enabled
-- Ensure your IP is not blocked by the WooCommerce site
+**Mannaiah Connection Failed or Forbidden:**
+- Verify `MANNAIAH_BACKEND_URL`, `LOGTO_M2M_APP_ID`, and `LOGTO_M2M_APP_SECRET` are correct
+- Ensure the M2M app has `order:view`, `contact:view`, and `shipping:quotations` scopes
+- Check backend logs for `Mannaiah request returned non-success status`; 401/403 responses include a bounded upstream body excerpt
 
 **Tracking Scraping Timeout:**
 - Servientrega uses browser automation (slower, ~3-4 seconds)
@@ -296,7 +299,7 @@ Detailed implementation documentation for each courier adapter:
    - Load configuration from `.env` and environment variables
    - Validate required fields
    - Initialize Zap logger
-   - Connect to WooCommerce (health check)
+   - Connect to Mannaiah (health check)
    - Connect to Redis (health check, fails if unavailable)
    - Wire up services with cache dependencies
    - Start Fiber HTTP server

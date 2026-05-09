@@ -27,7 +27,7 @@ import (
 
 // @title Tracker Scrapper API
 // @version 1.0
-// @description This API provides order tracking functionality by integrating with WooCommerce.
+// @description This API provides order tracking functionality by integrating with Mannaiah.
 // @contact.name API Support
 // @contact.email support@trackerscrapper.com
 // @license.name MIT
@@ -51,11 +51,11 @@ func main() {
 	)
 
 	// Initialize Order Adapter and run Health Check
-	wcAdapter := orderadapter.NewWooCommerceAdapter(cfg.WooCommerce)
-	if err := wcAdapter.HealthCheck(); err != nil {
-		l.Fatal("WooCommerce Health Check Failed", zap.Error(err))
+	mannaiahAdapter := orderadapter.NewMannaiahAdapter(cfg.Mannaiah)
+	if err := mannaiahAdapter.HealthCheck(); err != nil {
+		l.Fatal("Mannaiah Health Check Failed", zap.Error(err))
 	}
-	l.Info("WooCommerce connection verified")
+	l.Info("Mannaiah connection verified")
 
 	// Initialize Redis Cache
 	redisCache, err := cache.NewRedisAdapter(cfg.Cache.RedisURL)
@@ -73,7 +73,7 @@ func main() {
 
 	// Initialize Order Service & Handler with cache
 	orderCacheTTL := time.Duration(cfg.Cache.OrderTTL) * time.Second
-	orderService := orderservice.NewOrderService(wcAdapter, redisCache, orderCacheTTL)
+	orderService := orderservice.NewOrderService(mannaiahAdapter, redisCache, orderCacheTTL)
 	orderHandler := orderhandler.NewOrderHandler(orderService)
 
 	// Initialize Tracking Providers with proxy settings

@@ -24,8 +24,8 @@ type AppConfig struct {
 	// Database holds the database configuration.
 	Database DatabaseConfig `mapstructure:",squash"`
 
-	// WooCommerce holds the WooCommerce API configuration.
-	WooCommerce WooCommerceConfig `mapstructure:",squash"`
+	// Mannaiah holds the Mannaiah backend and M2M auth configuration.
+	Mannaiah MannaiahConfig `mapstructure:",squash"`
 
 	// Couriers holds the courier tracking URL configuration.
 	Couriers CourierConfig `mapstructure:",squash"`
@@ -37,14 +37,20 @@ type AppConfig struct {
 	Cache CacheConfig `mapstructure:",squash"`
 }
 
-// WooCommerceConfig holds the credentials for the WooCommerce Store.
-type WooCommerceConfig struct {
-	// URL is the base URL of the WooCommerce store.
-	URL string `mapstructure:"WC_URL" required:"true"`
-	// ConsumerKey is the public key for API access.
-	ConsumerKey string `mapstructure:"WC_CONSUMER_KEY" required:"true"`
-	// ConsumerSecret is the secret key for API access.
-	ConsumerSecret string `mapstructure:"WC_CONSUMER_SECRET" required:"true"`
+// MannaiahConfig holds the Mannaiah backend and Logto M2M credentials.
+type MannaiahConfig struct {
+	// BackendURL is the Mannaiah API base URL.
+	BackendURL string `mapstructure:"MANNAIAH_BACKEND_URL" default:"https://api.flockstore.co"`
+	// TokenEndpoint is the full OAuth2 token endpoint URL.
+	TokenEndpoint string `mapstructure:"LOGTO_M2M_TOKEN_ENDPOINT"`
+	// Endpoint is the Logto tenant base URL used to derive the token endpoint.
+	Endpoint string `mapstructure:"LOGTO_M2M_ENDPOINT"`
+	// AppID is the M2M application client ID.
+	AppID string `mapstructure:"LOGTO_M2M_APP_ID" required:"true"`
+	// AppSecret is the M2M application client secret.
+	AppSecret string `mapstructure:"LOGTO_M2M_APP_SECRET" required:"true"`
+	// Scope is the space-delimited set of Mannaiah API scopes.
+	Scope string `mapstructure:"LOGTO_M2M_SCOPE" default:"order:view contact:view shipping:quotations"`
 }
 
 // DatabaseConfig holds database connection details.

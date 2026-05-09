@@ -60,14 +60,11 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 
 	order, err := h.service.GetOrder(orderID, email)
 	if err != nil {
-		logger.Get().Error("Failed to fetch order",
-			zap.String("order_id", orderID),
-			zap.String("ray_id", rayID),
-			zap.Error(err),
-		)
-
 		status := http.StatusInternalServerError
 		msg := "Internal Server Error"
+		var upstreamStatus interface {
+			StatusCode() int
+		}
 
 		if errors.Is(err, service.ErrOrderNotFound) {
 			status = http.StatusNotFound
@@ -75,9 +72,19 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 		} else if errors.Is(err, service.ErrEmailMismatch) {
 			status = http.StatusUnauthorized
 			msg = "Email mismatch"
+		} else if errors.As(err, &upstreamStatus) {
+			status = upstreamStatus.StatusCode()
+			msg = "Upstream provider error"
 		} else {
 			msg = err.Error()
 		}
+
+		logger.Get().Warn("Order request failed",
+			zap.String("order_id", orderID),
+			zap.String("ray_id", rayID),
+			zap.Int("response_status", status),
+			zap.Error(err),
+		)
 
 		return c.Status(status).JSON(ErrorResponse{
 			Message: msg,
