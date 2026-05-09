@@ -50,7 +50,7 @@ type MannaiahConfig struct {
 	// AppSecret is the M2M application client secret.
 	AppSecret string `mapstructure:"LOGTO_M2M_APP_SECRET" required:"true"`
 	// Scope is the space-delimited set of Mannaiah API scopes.
-	Scope string `mapstructure:"LOGTO_M2M_SCOPE" default:"order:view contact:view shipping:quotations"`
+	Scope string `mapstructure:"LOGTO_M2M_SCOPE" default:"order:view contact:view product:view shipping:quotations"`
 }
 
 // DatabaseConfig holds database connection details.

@@ -23,7 +23,7 @@ func TestMannaiahAdapter_GetOrder_Success(t *testing.T) {
 			assert.Equal(t, "client_credentials", r.Form.Get("grant_type"))
 			assert.Equal(t, "m2m-client", r.Form.Get("client_id"))
 			assert.Equal(t, "m2m-secret", r.Form.Get("client_secret"))
-			assert.Equal(t, "order:view contact:view shipping:quotations", r.Form.Get("scope"))
+			assert.Equal(t, "order:view contact:view product:view shipping:quotations", r.Form.Get("scope"))
 			writeJSON(t, w, map[string]interface{}{
 				"access_token": "token-123",
 				"expires_in":   3600,
@@ -84,7 +84,7 @@ func TestMannaiahAdapter_GetOrder_Success(t *testing.T) {
 		TokenEndpoint: server.URL + "/oidc/token",
 		AppID:         "m2m-client",
 		AppSecret:     "m2m-secret",
-		Scope:         "order:view contact:view shipping:quotations",
+		Scope:         "order:view contact:view product:view shipping:quotations",
 	})
 
 	order, err := adapter.GetOrder("1025395", "john@example.com")
@@ -127,7 +127,7 @@ func TestMannaiahAdapter_GetOrder_NotFound(t *testing.T) {
 		TokenEndpoint: server.URL + "/oidc/token",
 		AppID:         "m2m-client",
 		AppSecret:     "m2m-secret",
-		Scope:         "order:view contact:view shipping:quotations",
+		Scope:         "order:view contact:view product:view shipping:quotations",
 	})
 
 	order, err := adapter.GetOrder("1025395", "missing@example.com")
@@ -156,7 +156,7 @@ func TestMannaiahAdapter_GetOrder_ForbiddenLogsStatus(t *testing.T) {
 		TokenEndpoint: server.URL + "/oidc/token",
 		AppID:         "m2m-client",
 		AppSecret:     "m2m-secret",
-		Scope:         "order:view contact:view shipping:quotations",
+		Scope:         "order:view contact:view product:view shipping:quotations",
 	})
 
 	order, err := adapter.GetOrder("1025395", "john@example.com")

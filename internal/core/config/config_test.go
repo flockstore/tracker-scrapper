@@ -47,7 +47,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	os.Setenv("LOGTO_M2M_TOKEN_ENDPOINT", "https://auth.example.com/oidc/token")
 	os.Setenv("LOGTO_M2M_APP_ID", "m2m_123")
 	os.Setenv("LOGTO_M2M_APP_SECRET", "secret_123")
-	os.Setenv("LOGTO_M2M_SCOPE", "order:view contact:view")
+	os.Setenv("LOGTO_M2M_SCOPE", "order:view contact:view product:view")
 	os.Setenv("COURIER_COORDINADORA_CO", "https://coordinadora.test")
 	os.Setenv("COURIER_SERVIENTREGA_CO", "https://servientrega.test")
 	os.Setenv("COURIER_INTERRAPIDISIMO_CO", "https://interrapidisimo.test")
@@ -76,7 +76,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "https://api.example.com", cfg.Mannaiah.BackendURL)
 	assert.Equal(t, "https://auth.example.com/oidc/token", cfg.Mannaiah.TokenEndpoint)
 	assert.Equal(t, "m2m_123", cfg.Mannaiah.AppID)
-	assert.Equal(t, "order:view contact:view", cfg.Mannaiah.Scope)
+	assert.Equal(t, "order:view contact:view product:view", cfg.Mannaiah.Scope)
 }
 
 // TestLoad_File verifies that values are loaded from a .env file.
