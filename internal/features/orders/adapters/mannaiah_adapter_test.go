@@ -169,6 +169,65 @@ func TestMannaiahAdapter_GetOrder_ForbiddenLogsStatus(t *testing.T) {
 	assert.Contains(t, apiErr.Body, "Forbidden resource")
 }
 
+// TestMannaiahAdapter_GetOrder_HashPrefixedIdentifier verifies display identifier variants.
+func TestMannaiahAdapter_GetOrder_HashPrefixedIdentifier(t *testing.T) {
+	orderRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oidc/token" {
+			writeJSON(t, w, map[string]interface{}{
+				"access_token": "token-123",
+				"expires_in":   3600,
+			})
+			return
+		}
+
+		switch r.URL.Path {
+		case "/contacts":
+			writeJSON(t, w, map[string]interface{}{
+				"data": []map[string]interface{}{{
+					"id":    "contact-1",
+					"email": "john@example.com",
+				}},
+			})
+		case "/orders":
+			orderRequests++
+			if r.URL.Query().Get("identifier") == "2163" {
+				writeJSON(t, w, map[string]interface{}{"data": []interface{}{}})
+				return
+			}
+			assert.Equal(t, "#2163", r.URL.Query().Get("identifier"))
+			writeJSON(t, w, map[string]interface{}{
+				"data": []map[string]interface{}{{
+					"id":            "order-internal-1",
+					"identifier":    "#2163",
+					"currentStatus": "CREATED",
+					"createdAt":     "2026-05-08T05:15:00Z",
+				}},
+			})
+		case "/shipping/marks":
+			writeJSON(t, w, map[string]interface{}{"data": []interface{}{}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewMannaiahAdapter(config.MannaiahConfig{
+		BackendURL:    server.URL,
+		TokenEndpoint: server.URL + "/oidc/token",
+		AppID:         "m2m-client",
+		AppSecret:     "m2m-secret",
+		Scope:         "order:view contact:view product:view shipping:quotations",
+	})
+
+	order, err := adapter.GetOrder("2163", "john@example.com")
+
+	require.NoError(t, err)
+	require.NotNil(t, order)
+	assert.Equal(t, "#2163", order.ID)
+	assert.Equal(t, 2, orderRequests)
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, value interface{}) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

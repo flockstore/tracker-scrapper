@@ -24,6 +24,18 @@ type mannaiahOrderListResponse struct {
 	Data []mannaiahOrder `json:"data"`
 }
 
+func (r mannaiahOrderListResponse) identifiers() []string {
+	identifiers := make([]string, 0, len(r.Data))
+	for _, order := range r.Data {
+		if order.Identifier != "" {
+			identifiers = append(identifiers, order.Identifier)
+			continue
+		}
+		identifiers = append(identifiers, order.ID)
+	}
+	return identifiers
+}
+
 type mannaiahOrder struct {
 	ID              string            `json:"id"`
 	Identifier      string            `json:"identifier"`

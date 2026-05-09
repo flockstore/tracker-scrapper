@@ -89,20 +89,45 @@ func (a *MannaiahAdapter) findContactByEmail(email string) (*mannaiahContact, er
 }
 
 func (a *MannaiahAdapter) findOrder(identifier string, contactID string) (*mannaiahOrder, error) {
+	candidates := orderIdentifierCandidates(identifier)
+
+	for _, candidate := range candidates {
+		var response mannaiahOrderListResponse
+		if err := a.getJSON("/orders", map[string]string{
+			"identifier": candidate,
+			"contactId":  contactID,
+			"limit":      "1",
+		}, &response); err != nil {
+			return nil, err
+		}
+
+		if len(response.Data) > 0 {
+			return &response.Data[0], nil
+		}
+	}
+
 	var response mannaiahOrderListResponse
 	if err := a.getJSON("/orders", map[string]string{
-		"identifier": identifier,
-		"contactId":  contactID,
-		"limit":      "1",
+		"contactId": contactID,
+		"limit":     "100",
 	}, &response); err != nil {
 		return nil, err
 	}
 
-	if len(response.Data) == 0 {
-		return nil, nil
+	for _, order := range response.Data {
+		if sameOrderIdentifier(order.Identifier, identifier) {
+			return &order, nil
+		}
 	}
 
-	return &response.Data[0], nil
+	logger.Get().Warn("Mannaiah order lookup returned no match",
+		zap.String("contact_id", contactID),
+		zap.String("requested_identifier", identifier),
+		zap.Strings("tried_identifiers", candidates),
+		zap.Strings("returned_identifiers", response.identifiers()),
+	)
+
+	return nil, nil
 }
 
 func (a *MannaiahAdapter) findShippingMarks(orderID string) ([]domain.TrackingInfo, error) {

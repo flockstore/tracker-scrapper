@@ -96,3 +96,36 @@ func splitName(name string) (string, string) {
 	}
 	return parts[0], strings.Join(parts[1:], " ")
 }
+
+func orderIdentifierCandidates(identifier string) []string {
+	trimmed := strings.TrimSpace(identifier)
+	withoutHash := strings.TrimLeft(trimmed, "#")
+	candidates := []string{trimmed, withoutHash}
+
+	if withoutHash != "" {
+		candidates = append(candidates, "#"+withoutHash)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	unique := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		unique = append(unique, candidate)
+	}
+
+	return unique
+}
+
+func sameOrderIdentifier(storedIdentifier string, requestedIdentifier string) bool {
+	return normalizeOrderIdentifier(storedIdentifier) == normalizeOrderIdentifier(requestedIdentifier)
+}
+
+func normalizeOrderIdentifier(identifier string) string {
+	return strings.ToLower(strings.TrimLeft(strings.TrimSpace(identifier), "#"))
+}
